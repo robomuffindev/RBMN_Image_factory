@@ -690,10 +690,24 @@ async def _runner_loop() -> None:
     in_flight: set[asyncio.Task] = set()
 
     def _slots_free() -> int:
-        # Cap by both dispatcher capacity AND a generous absolute ceiling so we
-        # never pile up unbounded coroutines if dispatcher reports stale state.
-        avail = dispatcher.available_slots()
-        return max(0, avail - len(in_flight))
+        # Dispatcher's `available_slots()` is the single source of truth — it
+        # already reflects every worker.in_flight increment from
+        # select_worker(reserve=True) and every decrement from
+        # dispatcher.release() in the runner's finally blocks.
+        #
+        # We deliberately DO NOT subtract len(in_flight) here. Doing so caused
+        # the runner to underdispatch in steady state: when a task hits its
+        # `finally:` and calls release(), the worker's in_flight drops to 0
+        # immediately — but the Python Task object itself isn't .done() yet
+        # because it's still finishing post-release cleanup (job log close,
+        # clear_context). So `available_slots = 2` while `len(in_flight) = 2`
+        # caused us to spawn 0 new tasks, missing a slot. Over time, three
+        # workers drained to one busy + two idle.
+        #
+        # If we accidentally over-spawn (e.g. multiple new tasks before any
+        # has called select_worker yet), the surplus tasks call select_worker
+        # → get None → sleep(1) → re-queue themselves. Bounded waste, no leak.
+        return dispatcher.available_slots()
 
     while not _stop_requested:
         # PRUNE — `add_done_callback(in_flight.discard)` is scheduled via
