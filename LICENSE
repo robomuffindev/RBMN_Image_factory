@@ -1,0 +1,14 @@
+Copyright (c) 2026 Robomuffin Labs (https://robomuffinlabs.com).
+
+All rights reserved.
+
+This repository is published for evaluation, personal experimentation, and
+non-commercial study. A formal open-source / commercial license is still
+being prepared. For any commercial use — including production deployments,
+client work, paid services, or redistribution — please contact Robomuffin Labs
+at https://robomuffinlabs.com before relying on this code.
+
+The bundled workflow files reference model weights distributed by Black
+Forest Labs (FLUX.2 Klein) and the ComfyUI team. Those weights and any
+upstream tooling are governed by their own licenses on their respective
+project pages; read them before commercial use of the generated images.

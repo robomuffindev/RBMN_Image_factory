@@ -1,0 +1,45 @@
+{
+  "_comment_top": "Robomuffin Image Factory — Batch Render sample. Top-level options apply to every row. References can be either absolute paths or bare filenames resolved against reference_base_dir.",
+
+  "output_format": "webp",
+  "retain_ref1_name": true,
+  "custom_output_dir": "C:\\Users\\hexum\\Pictures\\RBMN-batch-output",
+  "reference_base_dir": "C:\\Users\\hexum\\Pictures\\references",
+  "enhance_prompts": false,
+
+  "defaults": {
+    "width": 1024,
+    "height": 1024,
+    "negative_prompt": "blurry, low quality, watermark"
+  },
+
+  "rows": [
+    {
+      "_comment": "Bare filename — resolved against reference_base_dir at commit time. Result: C:\\Users\\hexum\\Pictures\\references\\hero-bottle.jpg",
+      "name": "kitchen_scene",
+      "prompt": "Place the product on a marble kitchen counter at golden hour, natural daylight from a window on the left.",
+      "reference_paths": ["hero-bottle.jpg"],
+      "seed": "random"
+    },
+    {
+      "name": "loft_scene",
+      "prompt": "Same product, modern industrial loft setting, dramatic side lighting, concrete walls in background.",
+      "reference_paths": ["hero-bottle.jpg"],
+      "width": 1280,
+      "height": 720
+    },
+    {
+      "_comment": "Multiple bare filenames — both resolved against reference_base_dir.",
+      "name": "outdoor_scene",
+      "prompt": "Outdoor lifestyle shot, hands holding the product, blurred forest background, bokeh.",
+      "reference_paths": ["hero-bottle.jpg", "hands-holding.jpg"]
+    },
+    {
+      "_comment": "Absolute path — used as-is, ignores reference_base_dir.",
+      "name": "from_other_folder",
+      "prompt": "Studio product photo on white seamless backdrop, soft umbrella lighting from above, crisp shadows.",
+      "reference_paths": ["C:\\different-folder\\product-alt.png"],
+      "seed": 42
+    }
+  ]
+}

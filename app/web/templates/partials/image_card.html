@@ -1,0 +1,32 @@
+<div class="card overflow-hidden" id="image-{{ img.id }}" data-image-id="{{ img.id }}">
+  {% if img.output_path %}
+    <img src="/api/images/{{ img.id }}/file" alt=""
+         class="w-full aspect-square object-cover cursor-zoom-in"
+         @click="openLightbox({id: '{{ img.id }}', src: '/api/images/{{ img.id }}/file', prompt: {{ (img.enhanced_prompt or img.prompt) | tojson }}, width: {{ img.width }}, height: {{ img.height }}, seed: {{ img.seed or 0 }} })">
+  {% else %}
+    <div class="w-full aspect-square flex items-center justify-center bg-zinc-900">
+      <span class="badge b-{{ img.status.value if img.status.value is defined else img.status }}"
+            x-text="status_{{ img.id|replace('-','_') }} || '{{ img.status.value if img.status.value is defined else img.status }}'">{{ img.status.value if img.status.value is defined else img.status }}</span>
+    </div>
+  {% endif %}
+  <div class="p-2 text-xs">
+    <div class="line-clamp-2 text-zinc-300" title="{{ img.enhanced_prompt or img.prompt }}">{{ img.enhanced_prompt or img.prompt }}</div>
+    <div class="mt-1 flex items-center justify-between text-zinc-500">
+      <span>{{ img.width }}×{{ img.height }}</span>
+      <span class="badge b-{{ img.status.value if img.status.value is defined else img.status }}">{{ img.status.value if img.status.value is defined else img.status }}</span>
+    </div>
+    {% if img.error %}<div class="text-red-400 mt-1 truncate" title="{{ img.error }}">{{ img.error }}</div>{% endif %}
+    <div class="flex gap-1 mt-2">
+      <button class="btn-secondary btn text-[10px] py-1 px-2"
+              hx-post="/api/images/{{ img.id }}/dispatch"
+              hx-swap="none">Re-run</button>
+      <a class="btn-secondary btn text-[10px] py-1 px-2"
+         href="/api/images/{{ img.id }}/file?download=1" download>DL</a>
+      <button class="btn-danger btn text-[10px] py-1 px-2"
+              hx-delete="/api/images/{{ img.id }}"
+              hx-target="#image-{{ img.id }}"
+              hx-swap="outerHTML"
+              hx-confirm="Delete this image?">×</button>
+    </div>
+  </div>
+</div>

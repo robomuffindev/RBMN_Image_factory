@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+{% block title %}Settings · Robomuffin Image Factory{% endblock %}
+{% block content %}
+<main class="max-w-3xl mx-auto p-6 w-full">
+
+  <div class="sticky top-12 z-20 mb-4 -mx-6 px-6 py-2 bg-zinc-950/95 border-b border-zinc-800 backdrop-blur flex items-center justify-between">
+    <h1 class="text-xl font-semibold">Settings</h1>
+    <div class="flex gap-2">
+      <a href="/" class="btn-secondary btn text-sm">Cancel</a>
+      <button id="btn-reload" class="btn-secondary btn text-sm">Reload</button>
+      <button id="btn-save" class="btn text-sm">Save</button>
+    </div>
+  </div>
+
+  <p class="text-zinc-500 text-xs mb-4">
+    Click <strong>Save</strong> to persist. API keys are shown masked (<code>********xxxx</code>) — leave them masked to keep the existing value, or type a new one to replace it.
+  </p>
+
+  <!-- ============ ComfyUI servers ============ -->
+  <section class="card p-5 mb-5">
+    <h2 class="text-lg font-semibold mb-1">ComfyUI servers</h2>
+    <p class="text-zinc-400 text-sm mb-3">Base URLs of your remote ComfyUI machines running Flux Klein 9B. Jobs route across all healthy servers.</p>
+    <div id="comfy-urls">
+      {% for url in (settings.comfyui_urls or [""]) %}
+      <div class="comfy-row flex items-center gap-2 mb-2">
+        <input class="input flex-1 comfy-url" value="{{ url }}" placeholder="http://192.168.1.50:8188">
+        <button class="btn-secondary btn text-sm btn-test-comfy">Test</button>
+        <span class="comfy-result text-xs"></span>
+        <button class="text-red-400 hover:text-red-300 px-2 btn-remove-comfy">×</button>
+      </div>
+      {% endfor %}
+    </div>
+    <button id="btn-add-comfy" class="btn-secondary btn text-sm">+ Add server</button>
+    <button id="btn-probe" class="btn-secondary btn text-sm ml-2">Probe all workers</button>
+  </section>
+
+  <!-- ============ LLM providers ============ -->
+  <section class="card p-5 mb-5">
+    <h2 class="text-lg font-semibold mb-1">LLM providers</h2>
+    <p class="text-zinc-400 text-sm mb-4">For prompt enhancement. Configure at least one — Ollama runs locally for free.</p>
+
+    {% set provs = [
+      {'id':'openai',    'label':'OpenAI (ChatGPT)',  'key':settings.openai_api_key,    'model':settings.openai_model,    'modelHint':'gpt-4o, gpt-5, gpt-4o-mini, ...'},
+      {'id':'anthropic', 'label':'Anthropic (Claude)','key':settings.anthropic_api_key, 'model':settings.anthropic_model, 'modelHint':'claude-sonnet-4-5, claude-haiku-4-5, ...'},
+      {'id':'gemini',    'label':'Google Gemini',     'key':settings.gemini_api_key,    'model':settings.gemini_model,    'modelHint':'gemini-2.0-flash, gemini-1.5-pro, ...'}
+    ] %}
+    {% for p in provs %}
+    <div class="border-b border-zinc-800 py-3" data-provider="{{ p.id }}">
+      <div class="flex items-center justify-between mb-2">
+        <span class="font-medium">{{ p.label }}</span>
+        <label class="text-xs text-zinc-400 flex items-center gap-1">
+          <input type="radio" name="defprov" value="{{ p.id }}" {% if settings.default_llm_provider == p.id %}checked{% endif %} class="default-llm-radio"> default
+        </label>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <input class="input prov-key" type="password" placeholder="API key for {{ p.label }}" value="{{ p.key or '' }}">
+        <input class="input prov-model" placeholder="{{ p.modelHint }}" value="{{ p.model or '' }}">
+      </div>
+      <div class="flex items-center gap-2 mt-2">
+        <button class="btn-secondary btn text-xs btn-test-llm">Test connection</button>
+        <span class="llm-result text-xs"></span>
+      </div>
+    </div>
+    {% endfor %}
+
+    <!-- Ollama is special: base URL instead of API key -->
+    <div class="border-b border-zinc-800 last:border-b-0 py-3" data-provider="ollama">
+      <div class="flex items-center justify-between mb-2">
+        <span class="font-medium">Ollama (local LLM)</span>
+        <label class="text-xs text-zinc-400 flex items-center gap-1">
+          <input type="radio" name="defprov" value="ollama" {% if settings.default_llm_provider == 'ollama' %}checked{% endif %} class="default-llm-radio"> default
+        </label>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <input class="input prov-base-url" placeholder="http://localhost:11434" value="{{ settings.ollama_base_url or 'http://localhost:11434' }}">
+        <input class="input prov-model" placeholder="llama3.1:8b, qwen2.5:14b, ..." value="{{ settings.ollama_model or '' }}">
+      </div>
+      <div class="flex items-center gap-2 mt-2">
+        <button class="btn-secondary btn text-xs btn-test-llm">Test connection</button>
+        <span class="llm-result text-xs"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Image generation engine ============ -->
+  <section class="card p-5 mb-5">
+    <h2 class="text-lg font-semibold mb-1">Image generation engine</h2>
+    <p class="text-zinc-400 text-sm mb-3">Choose where image jobs run. Switching applies to every project + Batch Render job from the moment you save.</p>
+
+    <label class="flex items-start gap-3 p-3 rounded-md bg-amber-500/5 border border-amber-500/30">
+      <input id="opt-use-gpt" type="checkbox" {% if settings.use_gpt_image %}checked{% endif %} class="mt-1">
+      <span class="text-sm">
+        <strong>Use OpenAI <code>gpt-image-2</code> instead of ComfyUI / Klein.</strong>
+        <span class="block text-amber-300 mt-1">⚠ Can get expensive — OpenAI charges per image. A 1024×1024 standard-quality render is ~$0.04, HD/quality=high is ~$0.19. Make sure your OpenAI account has credits and a usage limit set.</span>
+        <span class="block text-zinc-400 mt-1">When this is on: jobs skip ComfyUI entirely and use the OpenAI Images API. Reference images are still uploaded (Klein-style ref behavior maps to <code>images.edit</code>). Your ComfyUI URL settings are ignored while this is on.</span>
+      </span>
+    </label>
+
+    <div class="grid grid-cols-3 gap-3 mt-3">
+      <label class="block text-sm">Model
+        <select id="opt-gpt-model" class="input mt-1">
+          <option value="gpt-image-2"  {% if (settings.gpt_image_model or 'gpt-image-2') == 'gpt-image-2' %}selected{% endif %}>gpt-image-2 (newest)</option>
+          <option value="gpt-image-1"  {% if settings.gpt_image_model == 'gpt-image-1' %}selected{% endif %}>gpt-image-1</option>
+        </select>
+      </label>
+      <label class="block text-sm">Size
+        <select id="opt-gpt-size" class="input mt-1">
+          <option value="auto"      {% if (settings.gpt_image_size or 'auto') == 'auto' %}selected{% endif %}>auto</option>
+          <option value="1024x1024" {% if settings.gpt_image_size == '1024x1024' %}selected{% endif %}>1024×1024 (square)</option>
+          <option value="1024x1536" {% if settings.gpt_image_size == '1024x1536' %}selected{% endif %}>1024×1536 (portrait)</option>
+          <option value="1536x1024" {% if settings.gpt_image_size == '1536x1024' %}selected{% endif %}>1536×1024 (landscape)</option>
+        </select>
+      </label>
+      <label class="block text-sm">Quality
+        <select id="opt-gpt-quality" class="input mt-1">
+          <option value="auto"   {% if (settings.gpt_image_quality or 'auto') == 'auto' %}selected{% endif %}>auto</option>
+          <option value="low"    {% if settings.gpt_image_quality == 'low' %}selected{% endif %}>low (cheaper)</option>
+          <option value="medium" {% if settings.gpt_image_quality == 'medium' %}selected{% endif %}>medium</option>
+          <option value="high"   {% if settings.gpt_image_quality == 'high' %}selected{% endif %}>high (most expensive)</option>
+        </select>
+      </label>
+    </div>
+    <p class="text-xs text-zinc-500 mt-2">Requires a valid <strong>OpenAI</strong> API key in the LLM providers section above. The key is reused for both prompt enhancement and image generation.</p>
+  </section>
+
+  <!-- ============ Subject framing ============ -->
+  <section class="card p-5 mb-5">
+    <h2 class="text-lg font-semibold mb-1">Subject framing</h2>
+    <p class="text-zinc-400 text-sm mb-3">
+      When ON, every generation gets composition language appended to the prompt
+      so the main subject doesn't end up tiny in the frame. Use the per-batch
+      checkbox in <em>Batch Render</em> to override on individual runs.
+    </p>
+    <label class="flex items-start gap-3 mb-3">
+      <input id="opt-frame-default" type="checkbox" {% if settings.frame_subject_default %}checked{% endif %} class="mt-1">
+      <span class="text-sm">
+        <strong>Make sure main subject is largely in frame</strong>
+        <span class="block text-zinc-400 mt-1">Appends scaffolding like "hero composition, subject fills 60–70% of frame" plus an anti-zoom-out negative prompt.</span>
+      </span>
+    </label>
+    <div class="grid grid-cols-2 gap-3">
+      <label class="block text-sm">Strength
+        <select id="opt-frame-strength" class="input mt-1">
+          <option value="subtle"   {% if settings.frame_subject_strength == 'subtle' %}selected{% endif %}>Subtle — nudges composition</option>
+          <option value="moderate" {% if (settings.frame_subject_strength or 'moderate') == 'moderate' %}selected{% endif %}>Moderate — hero shot (recommended)</option>
+          <option value="strong"   {% if settings.frame_subject_strength == 'strong' %}selected{% endif %}>Strong — fills 75–85% of frame</option>
+        </select>
+      </label>
+    </div>
+    <details class="mt-3">
+      <summary class="text-xs text-zinc-400 cursor-pointer">Advanced: override the scaffold text</summary>
+      <div class="grid grid-cols-1 gap-2 mt-2">
+        <label class="block text-xs">Positive scaffold (replaces strength preset; leave blank to use preset)
+          <textarea id="opt-frame-pos" class="input mt-1" rows="2" placeholder="e.g. hero composition, subject fills 70% of frame, centered">{{ settings.frame_subject_positive_override or '' }}</textarea>
+        </label>
+        <label class="block text-xs">Negative scaffold (appended to negative prompt)
+          <textarea id="opt-frame-neg" class="input mt-1" rows="2" placeholder="e.g. tiny subject, wide shot, zoomed out, lots of background">{{ settings.frame_subject_negative_override or '' }}</textarea>
+        </label>
+      </div>
+    </details>
+  </section>
+
+  <!-- ============ Image defaults ============ -->
+  <section class="card p-5 mb-5">
+    <h2 class="text-lg font-semibold mb-3">Image defaults</h2>
+    <div class="grid grid-cols-2 gap-3">
+      <label class="block text-sm">Default width
+        <input id="def-width" class="input mt-1" type="number" value="{{ settings.default_width or 1024 }}"></label>
+      <label class="block text-sm">Default height
+        <input id="def-height" class="input mt-1" type="number" value="{{ settings.default_height or 1024 }}"></label>
+      <label class="block text-sm">Seed mode
+        <select id="def-seed-mode" class="input mt-1">
+          <option value="random" {% if (settings.default_seed_mode or 'random') == 'random' %}selected{% endif %}>Random each time</option>
+          <option value="fixed"  {% if settings.default_seed_mode == 'fixed' %}selected{% endif %}>Fixed</option>
+        </select>
+      </label>
+      <label class="block text-sm">Max parallel jobs per worker
+        <input id="def-max-par" class="input mt-1" type="number" min="1" max="4" value="{{ settings.max_parallel_per_worker or 1 }}"></label>
+      <label class="block text-sm col-span-2">Image model
+        <select id="def-model" class="input mt-1">
+          <option value="flux2_klein_9b" selected>FLUX.2 Klein 9B</option>
+        </select>
+      </label>
+    </div>
+    <label class="flex items-center gap-2 mt-3 text-sm">
+      <input id="def-sfw" type="checkbox" {% if settings.restrict_explicit_content %}checked{% endif %}>
+      Restrict explicit content (append SFW tags)
+    </label>
+  </section>
+
+  <!-- ============ System prompt override ============ -->
+  <section class="card p-5 mb-5">
+    <h2 class="text-lg font-semibold mb-1">System prompt override</h2>
+    <p class="text-zinc-400 text-sm mb-3">Replace the built-in system prompt used when enhancing prompts. Off = use default.</p>
+    {% set ov = (settings.image_system_prompt_overrides or {}).get(settings.image_model_type or 'flux2_klein_9b', {}) %}
+    <label class="flex items-center gap-2 mb-2 text-sm">
+      <input id="sysprompt-enabled" type="checkbox" {% if ov.get('enabled') %}checked{% endif %}>
+      Enable custom system prompt
+    </label>
+    <textarea id="sysprompt-text" class="input font-mono text-xs" rows="6" placeholder="Paste your custom system prompt here…">{{ ov.get('text') or '' }}</textarea>
+    <button id="btn-load-builtin" class="btn-secondary btn text-xs mt-2">Show built-in default</button>
+  </section>
+
+  <!-- ============ Prompt guidance ============ -->
+  <section class="card p-5 mb-5">
+    <h2 class="text-lg font-semibold mb-1">Prompt guidance</h2>
+    <p class="text-zinc-400 text-sm mb-3">Extra rules appended to the system prompt. Optional.</p>
+    {% set guidance = (settings.image_prompt_guidance or {}).get(settings.image_model_type or 'flux2_klein_9b', '') %}
+    <textarea id="prompt-guidance" class="input text-sm" rows="3" placeholder="e.g. Prefer warm color palettes. Avoid surreal compositions.">{{ guidance }}</textarea>
+  </section>
+
+  <!-- ============ Project directory ============ -->
+  <section class="card p-5 mb-5">
+    <h2 class="text-lg font-semibold mb-1">Project directory</h2>
+    <p class="text-zinc-400 text-sm mb-2">Where projects, generated images, and references are stored. Blank = <code>data/projects/</code> beside the app.</p>
+    <input id="project-dir" class="input" value="{{ settings.project_dir or '' }}" placeholder="C:\Users\hexum\Pictures\Robomuffin">
+  </section>
+
+  <p class="text-zinc-500 text-xs">Last saved: {{ settings.updated_at or '—' }}</p>
+</main>
+
+<script>
+(function () {
+  console.log("[robomuffin/settings] page script start");
+
+  function $(s, root) { return (root || document).querySelector(s); }
+  function $$(s, root) { return Array.from((root || document).querySelectorAll(s)); }
+
+  function toast(msg, kind) {
+    let el = document.getElementById("rb-toast");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "rb-toast";
+      el.style.cssText = "position:fixed;bottom:1.5rem;right:1.5rem;z-index:60;padding:.75rem 1rem;border-radius:.5rem;color:#fff;font-size:.875rem;box-shadow:0 4px 12px rgba(0,0,0,.4);transition:opacity .2s";
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.style.background = kind === "error" ? "#dc2626" : (kind === "warn" ? "#d97706" : "#16a34a");
+    el.style.opacity = "1";
+    clearTimeout(window._tt); window._tt = setTimeout(function () { el.style.opacity = "0"; }, 3500);
+    console.log("[robomuffin/settings] toast", kind || "info", msg);
+  }
+
+  // ---------------- ComfyUI URL list ----------------
+  function addComfyRow(value) {
+    const tmpl =
+      '<div class="comfy-row flex items-center gap-2 mb-2">' +
+      '<input class="input flex-1 comfy-url" value="' + (value || "").replace(/"/g, "&quot;") + '" placeholder="http://192.168.1.50:8188">' +
+      '<button class="btn-secondary btn text-sm btn-test-comfy">Test</button>' +
+      '<span class="comfy-result text-xs"></span>' +
+      '<button class="text-red-400 hover:text-red-300 px-2 btn-remove-comfy">×</button>' +
+      "</div>";
+    const wrap = document.createElement("div");
+    wrap.innerHTML = tmpl;
+    $("#comfy-urls").appendChild(wrap.firstChild);
+  }
+
+  $("#btn-add-comfy").addEventListener("click", function () {
+    console.log("[robomuffin/settings] add comfy server");
+    addComfyRow("");
+  });
+
+  document.addEventListener("click", function (ev) {
+    const t = ev.target;
+    if (t.classList.contains("btn-remove-comfy")) {
+      t.closest(".comfy-row").remove();
+      return;
+    }
+    if (t.classList.contains("btn-test-comfy")) {
+      const row = t.closest(".comfy-row");
+      const url = $(".comfy-url", row).value.trim();
+      const resEl = $(".comfy-result", row);
+      resEl.textContent = "testing…";
+      resEl.className = "comfy-result text-xs text-zinc-400";
+      console.log("[robomuffin/settings] test comfy", url);
+      fetch("/api/settings/test-comfyui", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ url: url })
+      }).then(r => r.json()).then(data => {
+        resEl.textContent = (data.success ? "✓ " : "✗ ") + (data.message || (data.success ? "OK" : "fail"));
+        resEl.className = "comfy-result text-xs " + (data.success ? "text-green-400" : "text-red-400");
+      }).catch(e => { resEl.textContent = "✗ " + e; resEl.className = "comfy-result text-xs text-red-400"; });
+      return;
+    }
+    if (t.classList.contains("btn-test-llm")) {
+      const sec = t.closest("[data-provider]");
+      const provider = sec.dataset.provider;
+      const keyInput  = $(".prov-key", sec);
+      const baseInput = $(".prov-base-url", sec);
+      const modelInput = $(".prov-model", sec);
+      const resEl = $(".llm-result", sec);
+      resEl.textContent = "testing…"; resEl.className = "llm-result text-xs text-zinc-400";
+      const body = {
+        provider: provider,
+        api_key:  keyInput  ? keyInput.value : null,
+        model:    modelInput ? modelInput.value : null,
+        base_url: baseInput ? baseInput.value : null,
+      };
+      console.log("[robomuffin/settings] test llm", provider);
+      fetch("/api/settings/test-llm", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(body)
+      }).then(r => r.json()).then(data => {
+        resEl.textContent = (data.success ? "✓ " : "✗ ") + (data.message || (data.success ? "OK" : "fail"));
+        resEl.className = "llm-result text-xs " + (data.success ? "text-green-400" : "text-red-400");
+      }).catch(e => { resEl.textContent = "✗ " + e; resEl.className = "llm-result text-xs text-red-400"; });
+      return;
+    }
+  });
+
+  // ---------------- Probe workers ----------------
+  $("#btn-probe").addEventListener("click", function () {
+    console.log("[robomuffin/settings] probe workers");
+    fetch("/api/workers/probe", { method: "POST" })
+      .then(r => r.json()).then(d => toast("Worker probe complete (" + Object.keys(d).length + " workers checked)"))
+      .catch(e => toast("Probe failed: " + e, "error"));
+  });
+
+  // ---------------- Load built-in prompt ----------------
+  $("#btn-load-builtin").addEventListener("click", function () {
+    const model = $("#def-model").value || "flux2_klein_9b";
+    fetch("/api/settings/builtin-prompt?model=" + encodeURIComponent(model) + "&type=image")
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => { $("#sysprompt-text").placeholder = d.text; toast("Built-in prompt loaded into placeholder"); })
+      .catch(e => toast("No built-in for that model", "warn"));
+  });
+
+  // ---------------- Reload ----------------
+  $("#btn-reload").addEventListener("click", function () {
+    console.log("[robomuffin/settings] reload");
+    window.location.reload();
+  });
+
+  // ---------------- Save ----------------
+  function collectPayload() {
+    const provs = {};
+    $$('[data-provider]').forEach(function (sec) {
+      const id = sec.dataset.provider;
+      const keyInput = $(".prov-key", sec);
+      const baseInput = $(".prov-base-url", sec);
+      const modelInput = $(".prov-model", sec);
+      if (keyInput && keyInput.value && !keyInput.value.startsWith("********")) provs[id + "_api_key"] = keyInput.value;
+      if (baseInput) provs[id + "_base_url"] = baseInput.value;
+      if (modelInput) provs[id + "_model"] = modelInput.value;
+    });
+    const defprov = ($('input[name="defprov"]:checked') || {}).value || null;
+    const model = $("#def-model").value || "flux2_klein_9b";
+    const sysOverride = {};
+    sysOverride[model] = { enabled: $("#sysprompt-enabled").checked, text: $("#sysprompt-text").value };
+    const guidance = {};
+    guidance[model] = $("#prompt-guidance").value;
+
+    return Object.assign({
+      comfyui_urls: $$('.comfy-url').map(i => i.value.trim()).filter(Boolean),
+      default_llm_provider: defprov,
+      default_width: parseInt($("#def-width").value, 10),
+      default_height: parseInt($("#def-height").value, 10),
+      default_seed_mode: $("#def-seed-mode").value,
+      max_parallel_per_worker: parseInt($("#def-max-par").value, 10),
+      restrict_explicit_content: $("#def-sfw").checked,
+      use_gpt_image: $("#opt-use-gpt").checked,
+      gpt_image_model:   $("#opt-gpt-model").value,
+      gpt_image_size:    $("#opt-gpt-size").value,
+      gpt_image_quality: $("#opt-gpt-quality").value,
+      frame_subject_default: $("#opt-frame-default").checked,
+      frame_subject_strength: $("#opt-frame-strength").value,
+      frame_subject_positive_override: ($("#opt-frame-pos").value || "").trim() || null,
+      frame_subject_negative_override: ($("#opt-frame-neg").value || "").trim() || null,
+      image_model_type: model,
+      project_dir: $("#project-dir").value || null,
+      image_system_prompt_overrides: sysOverride,
+      image_prompt_guidance: guidance,
+    }, provs);
+  }
+
+  $("#btn-save").addEventListener("click", function () {
+    const payload = collectPayload();
+    console.log("[robomuffin/settings] save", payload);
+    $("#btn-save").disabled = true; $("#btn-save").textContent = "Saving…";
+    fetch("/api/settings", {
+      method: "PUT", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(payload)
+    }).then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(t)))
+      .then(d => { toast("Saved"); console.log("[robomuffin/settings] saved", d); })
+      .catch(e => { toast("Save failed: " + String(e).slice(0,120), "error"); console.error("[robomuffin/settings] save fail", e); })
+      .finally(() => { $("#btn-save").disabled = false; $("#btn-save").textContent = "Save"; });
+  });
+
+  console.log("[robomuffin/settings] page script ready — handlers bound");
+})();
+</script>
+{% endblock %}

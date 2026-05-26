@@ -1,0 +1,165 @@
+# ============================================================================
+#  Robomuffin Image Factory — .gitignore
+#  Keeps the repo down to the minimum needed to clone and run from scratch.
+# ============================================================================
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+wheels/
+share/python-wheels/
+.installed.cfg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtualenvs
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Test / type / lint caches
+.pytest_cache/
+pytest-cache-files-*/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pyre/
+.pytype/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+nosetests.xml
+coverage.xml
+
+# Jupyter / IPython
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
+
+# --- Runtime data — NEVER commit user-generated content or DB --------------
+# Everything under data/ is created by the app at runtime: SQLite DB
+# (factory.db + WAL + SHM), per-project folders with references / outputs /
+# thumbnails / per-job log files, and the rolling factory.log.
+data/
+!data/.gitkeep
+
+# Stray DB files anywhere in the tree
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# --- Sensitive config — NEVER commit ----------------------------------------
+# Real .env has API keys + ComfyUI URLs. Ship .env.example only.
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+*.secrets
+*.secret.json
+secrets/
+*.pem
+*.key
+*.crt
+
+# --- IDE / editor -----------------------------------------------------------
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*.swn
+*~
+.history/
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# --- OS junk ----------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# --- Local-only assets (user-uploaded references + generated outputs) ------
+# These are runtime artefacts — users will generate their own. Per-extension
+# globs catch any rendered file that lands outside data/ (e.g., when the
+# user sets a custom_output_dir somewhere in the repo by accident).
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.bmp
+*.tif
+*.tiff
+*.avif
+*.heic
+*.heif
+*.mp4
+*.mov
+*.zip
+*.tar
+*.gz
+*.7z
+
+# Re-include sample files that ARE part of the repo:
+!Import_samples/**
+!devnotes/**
+# Re-include any repo-icon we ship in the static folder:
+!app/web/static/img/**
+
+# --- Vendor / reference downloads (local-only) ------------------------------
+# The user keeps a local copy of the official ComfyUI Klein workflows here
+# for reference. The workflows the APP actually uses are bundled at
+# app/services/comfyui/workflows/. Don't bloat the repo with a second copy.
+Klein-Workflow-Examples/
+ComfyUI/
+models/
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+*.pth
+*.bin
+
+# --- Misc -------------------------------------------------------------------
+*.bak
+*.orig
+*.rej
+*.log
+*.tmp
+node_modules/
+.cache/
+.parcel-cache/
+
+# Keep the data folder structure in the repo so a fresh clone has the right
+# layout, just not the contents.
+!data/.gitkeep

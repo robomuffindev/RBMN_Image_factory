@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Help · Robomuffin Image Factory{% endblock %}
+{% block content %}
+<main class="max-w-3xl mx-auto p-6 w-full prose prose-invert">
+  <h1>Help</h1>
+
+  <h2>Batch CSV format</h2>
+  <p>CSV with a header row. Recognized columns (only <code>prompt</code> is required):</p>
+  <ul>
+    <li><code>prompt</code> — the description</li>
+    <li><code>ref1</code>, <code>ref2</code>, <code>ref3</code>, <code>ref4</code> — paths to reference images reachable from the ComfyUI host</li>
+    <li><code>width</code>, <code>height</code> — integers, default to your settings</li>
+    <li><code>seed</code> — blank or <code>random</code> = randomize, integer = fixed</li>
+    <li><code>negative_prompt</code> — optional</li>
+    <li><code>enhance</code> — <code>true</code> / <code>false</code></li>
+    <li><code>name</code> — display label</li>
+  </ul>
+  <p><a class="text-indigo-300" href="/api/help/example.csv">Download example CSV</a></p>
+
+  <h2>Batch JSON format</h2>
+  <pre class="card p-3 text-xs overflow-auto">{
+  "project_name": "August Promo",
+  "defaults": { "width": 1024, "height": 1024, "enhance": true },
+  "items": [
+    {"prompt": "...", "ref1": "C:/refs/hero.png"},
+    {"prompt": "...", "ref1": "C:/refs/hero.png", "ref2": "C:/refs/logo.png"}
+  ]
+}</pre>
+
+  <h2>Debug endpoints</h2>
+  <ul>
+    <li><a class="text-indigo-300" href="/api/debug/status">/api/debug/status</a></li>
+    <li><a class="text-indigo-300" href="/api/debug/logs/recent">/api/debug/logs/recent</a></li>
+    <li><a class="text-indigo-300" href="/api/debug/errors/recent">/api/debug/errors/recent</a></li>
+    <li><a class="text-indigo-300" href="/api/debug/llm/calls">/api/debug/llm/calls</a></li>
+  </ul>
+</main>
+{% endblock %}

@@ -1,0 +1,24 @@
+[project]
+name = "robomuffin-image-factory"
+version = "0.1.0-dev"
+description = "AI image generation app driving FLUX.2 Klein 9B on remote ComfyUI servers."
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "W", "UP", "ASYNC", "S"]
+ignore = [
+  "S101",  # asserts are fine in tests
+  "E501",  # line-length is enforced by formatter, not linter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en" class="bg-zinc-950 text-zinc-100">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Robomuffin Image Factory{% endblock %}</title>
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- factory.js MUST load before Alpine so the alpine:init listener exists -->
+<!-- when Alpine fires the event. -->
+<script src="/static/js/factory.js" defer></script>
+<script src="https://unpkg.com/htmx.org@2.0.3" defer></script>
+<script src="https://unpkg.com/alpinejs@3.14.1" defer></script>
+
+<style>
+  body { background: #0b0d11; color: #e6e8ec; }
+  /* x-cloak hides Alpine-controlled elements until Alpine has initialized them
+     so the page doesn't flash unstyled content. */
+  [x-cloak] { display: none !important; }
+  .card { background: #1a1d22; border: 1px solid #2a2f37; border-radius: 0.6rem; }
+  .btn  { background: #6366f1; color: white; padding: 0.5rem 1rem; border-radius: 0.4rem; font-weight: 500; }
+  .btn:hover  { background: #818cf8; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-secondary { background: #2a2f37; color: #e6e8ec; }
+  .btn-secondary:hover { background: #3a414c; }
+  .btn-danger { background: #ef4444; }
+  .btn-danger:hover { background: #f87171; }
+  .input { background: #11141a; border: 1px solid #2a2f37; padding: 0.45rem 0.7rem; border-radius: 0.35rem; color: #e6e8ec; width: 100%; }
+  .input:focus { outline: 2px solid #6366f1; }
+  .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 0.3rem; font-size: 0.72rem; font-weight: 600; }
+  .b-queued   { background: #44403c; color: #fef3c7; }
+  .b-running  { background: #1d4ed8; color: #dbeafe; }
+  .b-done     { background: #15803d; color: #d1fae5; }
+  .b-failed   { background: #b91c1c; color: #fee2e2; }
+  .b-cancelled{ background: #44403c; color: #d6d3d1; }
+</style>
+</head>
+<body class="min-h-screen flex flex-col">
+<header class="border-b border-zinc-800 bg-zinc-950 px-6 py-3 flex items-center gap-6 sticky top-0 z-30">
+  <a href="/" class="font-bold text-lg tracking-tight">
+    <span class="text-indigo-400">Robomuffin</span> Image Factory
+  </a>
+  <nav class="flex gap-4 text-sm">
+    <a href="/" class="hover:text-indigo-300">Projects</a>
+    <a href="/settings" class="hover:text-indigo-300">Settings</a>
+    <a href="/help" class="hover:text-indigo-300">Help</a>
+  </nav>
+  <div class="ml-auto flex items-center gap-4 text-sm">
+    <span class="text-zinc-400">Workers:</span>
+    <span id="worker-chips" hx-get="/api/workers/summary" hx-trigger="load, every 5s" hx-swap="innerHTML">
+      <span class="text-zinc-500">—</span>
+    </span>
+    <span class="text-zinc-500" id="queue-depth"
+          hx-get="/api/jobs/summary" hx-trigger="load, every 3s" hx-swap="innerHTML">—</span>
+  </div>
+</header>
+
+{% block content %}{% endblock %}
+
+<footer class="border-t border-zinc-800 px-6 py-2 text-xs text-zinc-500 mt-auto">
+  v{{ version }} ·
+  <a href="/api/docs" class="hover:text-zinc-300">API docs</a> ·
+  <a href="/api/debug/status" class="hover:text-zinc-300">debug/status</a> ·
+  <a href="/api/debug/errors/recent" class="hover:text-zinc-300">recent errors</a>
+</footer>
+
+<!-- Page-level error capture: any uncaught JS exception is POSTed to the
+     backend so it ends up in data/logs/factory.log AND in the error ring buffer.
+     Also logs every fetch() round trip to the console for live debugging. -->
+<script>
+  console.log("[robomuffin] base.html loaded at", new Date().toISOString());
+
+  window.addEventListener("error", function (e) {
+    const payload = { source: "window.onerror", message: e.message, file: e.filename, line: e.lineno, col: e.colno, stack: e.error && e.error.stack };
+    console.error("[robomuffin] uncaught error", payload);
+    try { navigator.sendBeacon("/api/debug/client-log", new Blob([JSON.stringify({ level: "error", ...payload })], { type: "application/json" })); } catch (_) {}
+  });
+
+  window.addEventListener("unhandledrejection", function (e) {
+    const payload = { source: "unhandledrejection", reason: String(e.reason), stack: e.reason && e.reason.stack };
+    console.error("[robomuffin] unhandled promise rejection", payload);
+    try { navigator.sendBeacon("/api/debug/client-log", new Blob([JSON.stringify({ level: "error", ...payload })], { type: "application/json" })); } catch (_) {}
+  });
+
+  // Wrap fetch with a console-logging shim so every request is visible.
+  (function () {
+    const origFetch = window.fetch;
+    window.fetch = async function (resource, init) {
+      const url = (typeof resource === "string") ? resource : resource.url;
+      const method = (init && init.method) || "GET";
+      const t0 = performance.now();
+      console.log("[robomuffin] fetch →", method, url);
+      try {
+        const r = await origFetch(resource, init);
+        const ms = (performance.now() - t0).toFixed(1);
+        console.log("[robomuffin] fetch ←", r.status, method, url, ms + "ms");
+        return r;
+      } catch (e) {
+        console.error("[robomuffin] fetch ✗", method, url, e);
+        throw e;
+      }
+    };
+  })();
+
+  document.addEventListener("DOMContentLoaded", () => {
+    console.log("[robomuffin] DOMContentLoaded — Alpine present:", !!window.Alpine, "HTMX present:", !!window.htmx);
+  });
+</script>
+
+</body>
+</html>

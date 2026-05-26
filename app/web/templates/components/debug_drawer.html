@@ -1,0 +1,68 @@
+<div x-show="debugOpen" x-cloak
+     class="fixed bottom-0 left-0 right-0 z-40 h-72 bg-zinc-950 border-t border-zinc-800 flex flex-col">
+  <div class="flex items-center gap-2 p-2 border-b border-zinc-800 text-sm">
+    <strong>Debug console</strong>
+    <input class="input ml-2 w-48 text-xs" placeholder="filter…" x-model="debugFilter">
+    <select class="input w-32 text-xs" x-model="debugLevel">
+      <option value="">all levels</option>
+      <option value="debug">debug</option>
+      <option value="info">info</option>
+      <option value="warning">warning</option>
+      <option value="error">error</option>
+    </select>
+    <button class="btn-secondary btn text-xs" @click="debugLines = []">clear</button>
+    <button class="ml-auto text-zinc-400 hover:text-white" @click="debugOpen = false">×</button>
+  </div>
+  <div class="flex-1 overflow-auto font-mono text-xs p-2" id="debugConsole" x-ref="debugConsole">
+    <template x-for="(line, i) in filteredDebugLines" :key="i">
+      <div :class="line.level === 'error' ? 'text-red-300' : (line.level === 'warning' ? 'text-amber-300' : 'text-zinc-300')">
+        <span class="text-zinc-500" x-text="(line.timestamp || '').substring(11, 23)"></span>
+        <span class="ml-2" x-text="line.level"></span>
+        <span class="ml-2" x-text="line.event"></span>
+        <template x-for="(v, k) in line" :key="k">
+          <template x-if="!['timestamp','level','event','exception'].includes(k)">
+            <span class="ml-2 text-zinc-400" x-text="k + '=' + JSON.stringify(v).slice(0,80)"></span>
+          </template>
+        </template>
+      </div>
+    </template>
+  </div>
+</div>
+
+<script>
+  // Augment factoryGlobal with debug-drawer state.
+  document.addEventListener('alpine:init', () => {
+    Alpine.data('factoryGlobal', () => ({
+      debugOpen: false,
+      debugFilter: '',
+      debugLevel: '',
+      debugLines: [],
+      lightboxOpen: false,
+      lightboxData: null,
+      get filteredDebugLines() {
+        const f = (this.debugFilter || '').toLowerCase();
+        const lv = this.debugLevel;
+        return this.debugLines.filter(l => {
+          if (lv && (l.level||'').toLowerCase() !== lv) return false;
+          if (f && !JSON.stringify(l).toLowerCase().includes(f)) return false;
+          return true;
+        }).slice(-500);
+      },
+      openLightbox(data) { this.lightboxData = data; this.lightboxOpen = true; },
+      closeLightbox() { this.lightboxOpen = false; this.lightboxData = null; },
+      init() {
+        try {
+          const es = new EventSource('/api/logs/stream');
+          es.addEventListener('log', e => {
+            try {
+              const data = JSON.parse(e.data);
+              this.debugLines.push(data);
+              if (this.debugLines.length > 2000) this.debugLines.splice(0, this.debugLines.length - 2000);
+            } catch (_) {}
+          });
+          es.onerror = () => { /* browser will auto-reconnect */ };
+        } catch (_) {}
+      },
+    }));
+  });
+</script>

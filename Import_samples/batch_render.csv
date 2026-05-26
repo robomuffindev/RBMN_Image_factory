@@ -1,0 +1,10 @@
+# CSV format notes:
+# - ref1..ref4 can be either an ABSOLUTE path (C:\refs\hero.png) or a BARE filename (hero.png).
+# - Bare filenames are resolved against the "Reference base directory" you set in the Batch Render tab.
+# - Robomuffin opens each file LOCALLY and uploads it to your ComfyUI server at job time.
+# Remove this comment block before importing — CSV doesn't accept # lines.
+prompt,ref1,ref2,ref3,ref4,width,height,seed,negative_prompt,name
+"Place the product on a marble kitchen counter at golden hour, natural daylight from a window on the left.",hero-bottle.jpg,,,,1024,1024,,blurry,hero_kitchen
+"Same product, modern industrial loft setting, dramatic side lighting, concrete walls in background.",hero-bottle.jpg,,,,1024,1024,,blurry,hero_loft
+"Outdoor lifestyle shot, hands holding the product, blurred forest background, bokeh.",hero-bottle.jpg,hands-holding.jpg,,,1024,1024,random,blurry,hero_outdoor
+"Studio product photo on white seamless backdrop, soft umbrella lighting from above, crisp shadows.",C:\different-folder\product-alt.png,,,,1024,1024,42,blurry,hero_white_absolute

@@ -1,0 +1,1561 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} · Robomuffin{% endblock %}
+{% block content %}
+<main class="max-w-6xl mx-auto p-6 w-full" data-project-id="{{ project.id }}">
+
+  <header class="flex items-center justify-between mb-4">
+    <div>
+      <h1 class="text-2xl font-semibold">{{ project.name }}</h1>
+      {% if project.description %}<p class="text-zinc-400 text-sm">{{ project.description }}</p>{% endif %}
+    </div>
+    <div class="flex items-center gap-2">
+      <a href="/" class="btn-secondary btn text-sm">&larr; Projects</a>
+      <button id="btn-download-zip" class="btn-secondary btn text-sm">Download all (zip)</button>
+      <button id="btn-delete-project" class="btn-danger btn text-sm">Delete project</button>
+    </div>
+  </header>
+
+  <div id="setup-banner" class="card p-3 mb-4 border-amber-500/40 bg-amber-500/10 hidden">
+    <div class="flex items-start gap-2 text-sm">
+      <span class="text-amber-300 text-lg">&#9888;</span>
+      <div class="flex-1">
+        <strong>Setup needed before you can generate.</strong>
+        <ul id="setup-banner-list" class="list-disc list-inside text-zinc-200 mt-1"></ul>
+        <a href="/settings" class="text-indigo-300 hover:underline">Open Settings &rarr;</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="flex gap-1 mb-4 border-b border-zinc-800 items-end">
+    <button data-tab="gallery"       class="tab-btn px-4 py-2 text-sm border-b-2 -mb-px border-indigo-500 text-indigo-300">Gallery</button>
+    <button data-tab="batch_preview" class="tab-btn px-4 py-2 text-sm border-b-2 -mb-px border-transparent text-zinc-400 hover:text-zinc-200">Batch Preview</button>
+    <button data-tab="batch_render"  class="tab-btn px-4 py-2 text-sm border-b-2 -mb-px border-transparent text-zinc-400 hover:text-zinc-200">Batch Render</button>
+    <button data-tab="results"       class="tab-btn px-4 py-2 text-sm border-b-2 -mb-px border-transparent text-zinc-400 hover:text-zinc-200">Results</button>
+    <button data-tab="batches"      class="tab-btn px-4 py-2 text-sm border-b-2 -mb-px border-transparent text-zinc-400 hover:text-zinc-200">Batches</button>
+    <button data-tab="uploads"       class="tab-btn px-4 py-2 text-sm border-b-2 -mb-px border-transparent text-zinc-400 hover:text-zinc-200">Uploaded Assets</button>
+    <div class="ml-auto flex items-center gap-2 pb-1">
+      <span id="queue-status" class="text-xs text-zinc-400">queue: —</span>
+      <button id="btn-queue-pause" class="btn btn-secondary text-xs py-1 px-2" title="Stop auto-dispatching new commits (already-running jobs continue)">Pause Queue</button>
+      <button id="btn-queue-stop"  class="btn text-xs py-1 px-2" style="background:#dc2626;color:white" title="HARD STOP — cancel all queued + running jobs, interrupt ComfyUI workers">Stop Queue</button>
+      <button id="btn-queue-start" class="btn text-xs py-1 px-2" style="background:#16a34a;color:white" title="Release all pending jobs onto workers">Start Queue</button>
+    </div>
+  </div>
+
+  <!-- Worker health strip — shows each ComfyUI URL with health dot + in_flight.
+       Lets the user see at a glance why only N of M servers are actually working. -->
+  <div class="flex items-center gap-2 flex-wrap mb-3 text-xs">
+    <span class="text-zinc-500">Workers:</span>
+    <span id="workers-strip" class="flex items-center gap-2 flex-wrap"></span>
+    <button id="btn-workers-reprobe" class="btn btn-secondary text-xs py-0.5 px-2 ml-1" title="Force a health check on every configured ComfyUI server">Re-probe</button>
+  </div>
+
+  <!-- ============ Gallery ============ -->
+  <section id="tab-gallery" class="tab-section">
+    <div class="card p-4 mb-4">
+      <h2 class="text-lg font-semibold mb-2">New image</h2>
+      <textarea id="ni-prompt" class="input mb-2" rows="3" placeholder="Describe the image…"></textarea>
+      <div class="grid grid-cols-4 gap-2 mb-2">
+        <label class="block text-sm">Width <input id="ni-width" class="input mt-1" type="number" value="1024"></label>
+        <label class="block text-sm">Height <input id="ni-height" class="input mt-1" type="number" value="1024"></label>
+        <label class="block text-sm">Seed <input id="ni-seed" class="input mt-1" placeholder="random or integer"></label>
+        <label class="block text-sm" title="How many variations to queue with one click. Each gets a fresh random seed unless you typed an explicit Seed above.">
+          Count <input id="ni-count" class="input mt-1" type="number" min="1" max="50" value="1">
+        </label>
+      </div>
+      <div class="text-sm text-zinc-400 mb-2">Reference images (max 4):</div>
+      <div id="ni-ref-list" class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2"></div>
+      <button id="btn-ni-upload" type="button" class="card p-2 text-center text-xs cursor-pointer text-zinc-400 hover:text-indigo-300 inline-block mb-2" style="background:transparent;border:1px solid #2a2f37">
+        + Add reference image
+      </button>
+      <!-- hidden file input used by both the picker modal and direct uploads -->
+      <input id="ni-upload" type="file" class="hidden" accept="image/*">
+      <div class="flex justify-between items-center mt-2">
+        <button id="btn-enhance" class="btn-secondary btn text-sm">&#10024; Enhance prompt</button>
+        <button id="btn-generate" class="btn text-sm">Generate</button>
+      </div>
+    </div>
+
+    <div id="gallery-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+      <div id="empty-state" class="col-span-full text-center text-zinc-500 py-8">
+        No images yet. Type a prompt above and click <strong>Generate</strong>, or use the <strong>Batch Preview</strong> tab to import a CSV/JSON.
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Batch Preview ============ -->
+  <section id="tab-batch_preview" class="tab-section hidden">
+    <div class="card p-5 mb-4">
+      <h2 class="text-lg font-semibold mb-2">Import batch</h2>
+      <p class="text-zinc-400 text-sm mb-3">
+        CSV or JSON. Columns: <code class="text-xs">prompt, ref1..ref4, width, height, seed, negative_prompt, enhance, name</code>.
+        <a href="/api/batch/example.csv" class="text-indigo-300 hover:underline">Download example CSV</a>
+      </p>
+      <input id="batch-file" type="file" accept=".csv,.json" class="mb-2 text-sm">
+      <div id="batch-controls" class="flex items-center gap-2 mt-2 hidden">
+        <button id="btn-enhance-bulk" class="btn-secondary btn text-sm">&#10024; Enhance all prompts</button>
+        <select id="batch-commit-mode" class="input w-auto">
+          <option value="new">Create new project</option>
+          <option value="append" selected>Append to this project</option>
+        </select>
+        <input id="batch-project-name" class="input w-48 hidden" placeholder="New project name">
+        <button id="btn-commit-batch" class="btn">Commit &amp; queue</button>
+      </div>
+    </div>
+    <div id="batch-rows" class="card overflow-x-auto hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-zinc-900 text-left">
+          <tr><th class="p-2">#</th><th class="p-2">Prompt</th><th class="p-2">Refs</th><th class="p-2">Size</th><th class="p-2">Seed</th><th class="p-2">Status</th></tr>
+        </thead>
+        <tbody id="batch-tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ Batch Render ============ -->
+  <section id="tab-batch_render" class="tab-section hidden">
+    <div class="card p-5 mb-4">
+      <h2 class="text-lg font-semibold mb-1">Batch Render</h2>
+      <p class="text-zinc-400 text-sm mb-3">
+        Queue many tasks at once, each with its own prompt + references. Build the list manually with
+        <strong>+ Add row</strong>, or <strong>Import CSV/JSON</strong>.
+        <a href="/help" class="text-indigo-300 hover:underline">format help</a> ·
+        <a href="/api/batch/example.csv" class="text-indigo-300 hover:underline">download sample CSV</a>
+      </p>
+
+      <!-- Batch-level options -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+        <label class="block text-sm">
+          Output format
+          <select id="br-format" class="input mt-1">
+            <option value="png" selected>PNG (lossless)</option>
+            <option value="jpg">JPG (smaller, lossy)</option>
+            <option value="webp">WebP (smallest, web-optimized)</option>
+          </select>
+        </label>
+        <label class="block text-sm">
+          Output directory <span class="text-zinc-500">(blank = project's outputs folder)</span>
+          <input id="br-outdir" class="input mt-1" placeholder="C:\Users\hexum\Pictures\RBMN-batch-output">
+        </label>
+        <label class="block text-sm">
+          Reference base directory <span class="text-zinc-500">(folder of reference images on this machine)</span>
+          <input id="br-refbase" class="input mt-1" placeholder="C:\Users\hexum\Pictures\references">
+        </label>
+        <div class="text-xs text-zinc-500 md:col-span-2 -mt-1">
+          Tip: set this to a folder of reference images, then use bare filenames like <code>kitten.png</code> in your rows.
+          Robomuffin reads the file locally and uploads it to ComfyUI at runtime — your ComfyUI host doesn't need to see your folder.
+          Absolute paths (<code>C:\refs\kitten.png</code>) override the base.
+        </div>
+        <label class="flex items-center gap-2 text-sm">
+          <input id="br-retain-name" type="checkbox">
+          <span>Retain original first-reference filename (great for replacing images on websites)</span>
+        </label>
+
+        <!-- Batch-wide dimension override. When ON, every row's width/height
+             is replaced by these values BEFORE rows are committed — useful
+             when the imported CSV inherited odd aspect ratios from the
+             reference images and you want consistent output dimensions. -->
+        <div class="md:col-span-2 p-3 rounded-md bg-zinc-900/50 border border-zinc-800">
+          <label class="flex items-center gap-2 text-sm mb-2">
+            <input id="br-override-size" type="checkbox">
+            <strong>Override all dimensions for this batch</strong>
+            <span class="text-zinc-500 text-xs">— replaces width/height on every row in the list</span>
+          </label>
+          <div class="grid grid-cols-3 gap-2 items-end" id="br-override-size-fields" style="display:none">
+            <label class="block text-xs">Width
+              <input id="br-override-w" class="input mt-1" type="number" min="64" max="4096" step="8" value="1024">
+            </label>
+            <label class="block text-xs">Height
+              <input id="br-override-h" class="input mt-1" type="number" min="64" max="4096" step="8" value="1024">
+            </label>
+            <div class="text-xs text-zinc-400">
+              Common: 1024×1024, 1024×1536, 1536×1024, 832×1216, 1216×832
+            </div>
+          </div>
+        </div>
+        <label class="flex items-center gap-2 text-sm">
+          <input id="br-enhance" type="checkbox">
+          <span>AI-optimize each prompt via the configured LLM <em class="text-zinc-500">(off by default)</em></span>
+        </label>
+        <label class="flex items-center gap-2 text-sm">
+          <select id="br-frame" class="input" style="max-width:14rem">
+            <option value="">Subject framing: inherit from Settings</option>
+            <option value="on">Subject framing: <strong>ON</strong> for this batch</option>
+            <option value="off">Subject framing: <strong>OFF</strong> for this batch</option>
+          </select>
+          <span class="text-zinc-500 text-xs">"Make sure main subject is largely in frame" — overrides the global default.</span>
+        </label>
+      </div>
+
+      <!-- Import + add controls -->
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <input id="br-import" type="file" accept=".csv,.json" class="text-sm">
+        <button id="btn-br-add"     class="btn-secondary btn text-sm">+ Add row</button>
+        <button id="btn-br-clear"   class="btn-secondary btn text-sm">Clear all</button>
+        <span id="br-count" class="ml-auto text-zinc-400 text-sm">0 tasks</span>
+        <button id="btn-br-commit"  class="btn text-sm">Commit &amp; queue</button>
+      </div>
+    </div>
+
+    <div class="card overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-zinc-900 text-left">
+          <tr>
+            <th class="p-2">#</th>
+            <th class="p-2">Name</th>
+            <th class="p-2">Prompt</th>
+            <th class="p-2">References (paths on the ComfyUI host)</th>
+            <th class="p-2">Size</th>
+            <th class="p-2">Seed</th>
+            <th class="p-2"></th>
+          </tr>
+        </thead>
+        <tbody id="br-tbody">
+          <tr id="br-empty"><td colspan="7" class="p-4 text-center text-zinc-500">No tasks yet. Click <strong>+ Add row</strong> or drop a CSV/JSON file above.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ Results ============ -->
+  <section id="tab-results" class="tab-section hidden">
+    <div class="card p-4 mb-3">
+      <div class="flex items-center justify-between text-sm">
+        <span id="results-counts">No images yet.</span>
+        <span id="results-eta" class="text-zinc-400"></span>
+      </div>
+      <div class="h-2 mt-2 rounded bg-zinc-800 overflow-hidden">
+        <div id="results-bar" class="h-full bg-indigo-500 transition-all" style="width:0%"></div>
+      </div>
+    </div>
+    <div id="results-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"></div>
+  </section>
+
+
+  <!-- ============ Batches ============ -->
+  <section id="tab-batches" class="tab-section hidden">
+    <div class="card p-4 mb-3 flex flex-wrap items-center gap-2">
+      <h2 class="text-lg font-semibold flex-1">Batch runs</h2>
+      <label class="text-xs text-zinc-400 flex items-center gap-1">
+        <input id="batches-hide-completed" type="checkbox"> hide completed
+      </label>
+      <button id="btn-batches-refresh" class="btn-secondary btn text-sm">Refresh</button>
+      <button id="btn-clear-cancelled"   class="btn-secondary btn text-sm" title="Delete every CANCELLED image in this project (across all batches)">Clear cancelled</button>
+      <button id="btn-clear-all-failed"  class="btn-danger btn text-sm">Clear all failed</button>
+      <button id="btn-purge-all"         class="btn text-sm" style="background:#dc2626;color:white" title="DELETE every image in this project regardless of status. Cannot be undone.">Purge all</button>
+    </div>
+    <div id="batches-list" class="space-y-3">
+      <div id="batches-empty" class="card p-6 text-center text-zinc-500">
+        No batches yet. Use the <strong>Batch Render</strong> tab to create one.
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Uploaded Assets ============ -->
+  <section id="tab-uploads" class="tab-section hidden">
+    <div class="card p-4 mb-4 flex items-center justify-between">
+      <div>
+        <h2 class="text-lg font-semibold">Uploaded reference assets</h2>
+        <p class="text-zinc-400 text-sm">Every reference image you uploaded to this project. Click to preview, × to delete.</p>
+      </div>
+      <button id="btn-uploads-refresh" class="btn-secondary btn text-sm">Refresh</button>
+    </div>
+    <div id="uploads-grid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+      <div id="uploads-empty" class="col-span-full text-center text-zinc-500 py-8">No uploads yet. Use the <strong>+ Add reference image</strong> button on the Gallery tab.</div>
+    </div>
+  </section>
+
+  <!-- ============ Reference picker modal ============ -->
+  <div id="ref-picker" class="fixed inset-0 z-50 bg-black/80 items-center justify-center p-6 hidden" style="display:none">
+    <div class="card max-w-4xl w-full max-h-[90vh] overflow-auto p-5 relative">
+      <button id="rp-close" class="absolute top-2 right-3 text-zinc-400 hover:text-white text-2xl">×</button>
+      <h2 class="text-lg font-semibold mb-3">Add reference image</h2>
+      <div class="flex gap-2 mb-4 border-b border-zinc-800">
+        <button id="rp-tab-upload"  class="rp-tab px-4 py-2 text-sm border-b-2 -mb-px border-indigo-500 text-indigo-300">Upload from computer</button>
+        <button id="rp-tab-pick"    class="rp-tab px-4 py-2 text-sm border-b-2 -mb-px border-transparent text-zinc-400 hover:text-zinc-200">Choose existing asset</button>
+      </div>
+      <div id="rp-panel-upload">
+        <p class="text-zinc-400 text-sm mb-3">Pick a PNG / JPG / WebP from your computer. It's uploaded into this project's <code>references/</code> folder and becomes a reusable asset.</p>
+        <input id="rp-file" type="file" accept="image/*" class="mb-3">
+        <div id="rp-upload-status" class="text-xs text-zinc-400"></div>
+      </div>
+      <div id="rp-panel-pick" class="hidden">
+        <p class="text-zinc-400 text-sm mb-3">Pick from images already uploaded to this project.</p>
+        <div id="rp-grid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3"></div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+(function () {
+  const PROJECT_ID = document.querySelector("main").dataset.projectId;
+  const log = (...a) => console.log("[robomuffin/project]", ...a);
+  const err = (...a) => console.error("[robomuffin/project]", ...a);
+  log("page boot, project=", PROJECT_ID);
+
+  function $(s, r) { return (r || document).querySelector(s); }
+  function $$(s, r) { return Array.from((r || document).querySelectorAll(s)); }
+
+  function toast(msg, kind) {
+    let el = document.getElementById("rb-toast");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "rb-toast";
+      el.style.cssText = "position:fixed;bottom:1.5rem;right:1.5rem;z-index:60;padding:.75rem 1rem;border-radius:.5rem;color:#fff;font-size:.875rem;box-shadow:0 4px 12px rgba(0,0,0,.4);transition:opacity .2s";
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.style.background = kind === "error" ? "#dc2626" : (kind === "warn" ? "#d97706" : "#16a34a");
+    el.style.opacity = "1";
+    clearTimeout(window._tt); window._tt = setTimeout(() => { el.style.opacity = "0"; }, 3500);
+    log("toast", kind || "info", msg);
+  }
+
+  // -------- Tabs --------
+  function setTab(name) {
+    log("setTab", name);
+    $$(".tab-btn").forEach(b => {
+      const active = b.dataset.tab === name;
+      b.classList.toggle("border-indigo-500", active);
+      b.classList.toggle("text-indigo-300", active);
+      b.classList.toggle("border-transparent", !active);
+      b.classList.toggle("text-zinc-400", !active);
+    });
+    $$(".tab-section").forEach(s => s.classList.toggle("hidden", s.id !== "tab-" + name));
+  }
+  $$(".tab-btn").forEach(b => b.addEventListener("click", () => setTab(b.dataset.tab)));
+  // Honor ?tab= in URL
+  const initialTab = new URLSearchParams(window.location.search).get("tab");
+  if (initialTab) setTab(initialTab);
+
+  // -------- Setup banner --------
+  function refreshSetupBanner() {
+    Promise.all([
+      fetch("/api/settings").then(r => r.json()),
+      fetch("/api/workers").then(r => r.json()),
+    ]).then(([s, w]) => {
+      const issues = [];
+      if (s.use_gpt_image) {
+        // GPT Image engine is on — ComfyUI is irrelevant; we need an OpenAI key.
+        if (!s.openai_api_key) issues.push("GPT Image engine is on but no OpenAI API key is configured.");
+      } else {
+        const urls = s.comfyui_urls || [];
+        if (!urls.length) issues.push("No ComfyUI server URLs configured.");
+        else {
+          const healthy = (w.workers || []).filter(x => x.healthy).length;
+          if (healthy === 0) issues.push("ComfyUI URL configured but no server is reachable (" + urls.length + " configured, 0 healthy).");
+        }
+      }
+      const hasLLM = s.default_llm_provider || s.openai_api_key || s.anthropic_api_key || s.gemini_api_key || s.ollama_base_url;
+      if (!hasLLM) issues.push("No LLM provider configured (you can still generate without one, but ✨ Enhance won't work).");
+      const banner = $("#setup-banner");
+      const list = $("#setup-banner-list");
+      list.innerHTML = "";
+      if (issues.length) {
+        issues.forEach(t => { const li = document.createElement("li"); li.textContent = t; list.appendChild(li); });
+        banner.classList.remove("hidden");
+      } else {
+        banner.classList.add("hidden");
+      }
+      log("setupBanner issues:", issues);
+    }).catch(e => err("refreshSetupBanner", e));
+  }
+
+  // -------- Reference upload --------
+  const refPaths = [];
+  function renderRefList() {
+    const list = $("#ni-ref-list");
+    list.innerHTML = "";
+    refPaths.forEach((p, i) => {
+      const div = document.createElement("div");
+      div.className = "card p-2 flex items-center justify-between";
+      const name = p.split(/[\\/]/).pop();
+      div.innerHTML = '<span class="truncate text-xs">' + name.replace(/</g,"&lt;") + '</span>';
+      const x = document.createElement("button");
+      x.className = "text-red-400 hover:text-red-300 px-1"; x.textContent = "×";
+      x.addEventListener("click", () => { refPaths.splice(i, 1); renderRefList(); });
+      div.appendChild(x);
+      list.appendChild(div);
+    });
+    $("#ni-upload-label").style.display = refPaths.length >= 4 ? "none" : "";
+  }
+  $("#ni-upload").addEventListener("change", function (ev) {
+    const f = ev.target.files[0]; if (!f) return;
+    log("upload reference", f.name);
+    const fd = new FormData(); fd.append("file", f);
+    fetch("/api/projects/" + PROJECT_ID + "/upload-reference", { method: "POST", body: fd })
+      .then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(t)))
+      .then(d => { refPaths.push(d.path); renderRefList(); toast("Uploaded " + d.name); })
+      .catch(e => toast("Upload failed: " + String(e).slice(0,120), "error"));
+    ev.target.value = "";
+  });
+
+  // -------- Images state + grid render --------
+  const state = { images: [], imagesById: {}, firstDoneAt: null };
+
+  // Visual ordering: running first (live action), then completed/failed/cancelled
+  // (history), then queued (pending). Within each tier, newest-first.
+  const STATUS_RANK = { running: 0, done: 1, failed: 2, cancelled: 3, queued: 4 };
+  function sortedImages() {
+    return state.images.slice().sort((a, b) => {
+      const ra = (STATUS_RANK[a.status] !== undefined) ? STATUS_RANK[a.status] : 5;
+      const rb = (STATUS_RANK[b.status] !== undefined) ? STATUS_RANK[b.status] : 5;
+      if (ra !== rb) return ra - rb;
+      // Tie-break: more recent first.
+      const ta = a.completed_at || a.created_at || "";
+      const tb = b.completed_at || b.created_at || "";
+      return tb.localeCompare(ta);
+    });
+  }
+
+  function renderGalleryCards() {
+    const grid = $("#gallery-grid");
+    $("#empty-state").style.display = state.images.length ? "none" : "";
+    $$("#gallery-grid > .img-card").forEach(c => c.remove());
+    sortedImages().forEach(img => grid.appendChild(makeCard(img, "gallery")));
+    renderResults();
+  }
+
+  function makeCard(img, kind) {
+    const div = document.createElement("div");
+    div.className = "img-card card overflow-hidden";
+    div.dataset.imageId = img.id;
+    // Cache-buster: include completed_at (or created_at) timestamp so the
+    // browser never serves a stale cached 404 for a file that's since been
+    // written. onerror shows a clear "file not on disk" placeholder instead
+    // of the generic broken-image icon — tells the user exactly what's wrong.
+    const cacheBust = encodeURIComponent(img.completed_at || img.created_at || "");
+    const imgSrc = "/api/images/" + img.id + "/file?cb=" + cacheBust;
+    const onErr = "this.onerror=null;this.style.display='none';this.nextElementSibling.style.display='flex';";
+    const thumb = img.output_path
+      ? '<img src="' + imgSrc + '" class="w-full aspect-square object-cover cursor-zoom-in" data-lightbox="1" onerror="' + onErr + '">' +
+        '<div class="w-full aspect-square hidden items-center justify-center bg-red-900/30 text-red-300 text-xs text-center p-2"><div>output_path set but file not loadable<br><span class="text-[10px] text-zinc-400 break-all">' + (img.output_path||"").replace(/</g,"&lt;") + '</span></div></div>'
+      : '<div class="w-full aspect-square flex items-center justify-center bg-zinc-900 text-zinc-400"><div class="text-center"><div class="text-xs mb-1">' + img.status + '</div>' +
+        (img.progress != null ? '<div class="text-[10px] text-zinc-500">' + img.progress + '%</div>' : '') + '</div></div>';
+    const promptText = (img.enhanced_prompt || img.prompt || "").slice(0, 200);
+    // Render reference rows — green if the file exists locally on the server,
+    // red if not. This is the fastest way to see whether the runner will be
+    // able to find the file when the job is dispatched.
+    const refDetail = img.references_detail || (img.reference_paths || []).map(p => ({path:p, exists:false, name:(p||"").split(/[\\/]/).pop()}));
+    let refsHTML = "";
+    if (refDetail.length) {
+      refsHTML = '<div class="mt-1 space-y-0.5">' + refDetail.map((r, idx) => {
+        const cls = r.exists ? "text-emerald-400" : "text-red-400";
+        const ico = r.exists ? "✓" : "✗";
+        const full = (r.path || "").replace(/"/g, "&quot;");
+        const label = (r.name || r.path || "").replace(/</g, "&lt;");
+        return '<div class="text-[10px] ' + cls + ' truncate" title="ref' + (idx+1) + ': ' + full + '">' +
+                 ico + ' ref' + (idx+1) + ': ' + label +
+               '</div>';
+      }).join("") + '</div>';
+    }
+    div.innerHTML =
+      thumb +
+      '<div class="p-2 text-xs">' +
+        '<div class="line-clamp-2 text-zinc-300" title="' + promptText.replace(/"/g,"&quot;") + '">' + promptText.replace(/</g,"&lt;") + '</div>' +
+        refsHTML +
+        '<div class="mt-1 flex items-center justify-between text-zinc-500">' +
+          '<span>' + img.width + '×' + img.height + '</span>' +
+          '<span class="badge b-' + img.status + '">' + img.status + '</span>' +
+        '</div>' +
+        (img.error ? '<div class="text-red-400 mt-1 truncate" title="' + img.error.replace(/"/g,"&quot;") + '">' + img.error.replace(/</g,"&lt;") + '</div>' : '') +
+        '<div class="flex gap-1 mt-2">' +
+          '<button class="btn-secondary btn text-[10px] py-1 px-2 btn-rerun">Re-run</button>' +
+          (img.output_path ? '<a class="btn-secondary btn text-[10px] py-1 px-2" href="/api/images/' + img.id + '/file?download=1" download>DL</a>' : '') +
+          '<button class="btn-danger btn text-[10px] py-1 px-2 btn-del">×</button>' +
+        '</div>' +
+      '</div>';
+    div.querySelector(".btn-rerun").addEventListener("click", () => rerunImage(img.id));
+    div.querySelector(".btn-del").addEventListener("click", () => deleteImage(img.id));
+    const im = div.querySelector("img");
+    if (im) im.addEventListener("click", () => openLightbox(img));
+    return div;
+  }
+
+  function renderResults() {
+    const c = { queued:0, running:0, done:0, failed:0, cancelled:0, total: state.images.length };
+    state.images.forEach(i => { if (c[i.status] !== undefined) c[i.status]++; });
+    const pct = c.total ? Math.round(c.done * 100 / c.total) : 0;
+    $("#results-counts").textContent =
+      "Progress: " + c.done + " done / " + c.running + " running / " +
+      c.queued + " queued / " + c.failed + " failed of " + c.total;
+    $("#results-bar").style.width = pct + "%";
+    const grid = $("#results-grid");
+    grid.innerHTML = "";
+    sortedImages().forEach(img => grid.appendChild(makeCard(img, "results")));
+    if (c.queued + c.running === 0 && c.total > 0) $("#results-eta").textContent = "complete";
+    else if (c.done > 0 && state.firstDoneAt) {
+      const elapsed = (Date.now() - state.firstDoneAt) / 1000;
+      const rate = c.done / elapsed;
+      if (rate > 0) $("#results-eta").textContent = "~" + Math.round((c.queued + c.running) / rate) + "s remaining";
+    } else $("#results-eta").textContent = "";
+  }
+
+  function refreshImages() {
+    return fetch("/api/projects/" + PROJECT_ID + "/images")
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => {
+        state.images = d.items || [];
+        state.imagesById = {};
+        state.images.forEach(i => state.imagesById[i.id] = i);
+        renderGalleryCards();
+        log("refreshImages", state.images.length);
+      })
+      .catch(e => err("refreshImages", e));
+  }
+
+  // -------- Generate / Enhance / Re-run / Delete --------
+  $("#btn-generate").addEventListener("click", async function () {
+    const prompt = $("#ni-prompt").value.trim();
+    if (!prompt) { toast("Type a prompt first", "warn"); return; }
+    const seedRaw = $("#ni-seed").value.trim();
+    // If user typed an explicit seed, ALL N variations get the same seed
+    // (they'll be identical — useful for sanity checks). Otherwise each gets
+    // a random seed automatically (seed=null → server randomizes per job).
+    const fixedSeed = (!seedRaw || seedRaw === "random") ? null : parseInt(seedRaw, 10);
+    const count = Math.max(1, Math.min(50, parseInt($("#ni-count").value, 10) || 1));
+    const baseBody = {
+      prompt: prompt,
+      width: parseInt($("#ni-width").value, 10) || 1024,
+      height: parseInt($("#ni-height").value, 10) || 1024,
+      reference_paths: refPaths.slice(0, 4),
+      dispatch: true,
+    };
+    log("generate", { ...baseBody, seed: fixedSeed, count });
+    this.disabled = true;
+    let okCount = 0;
+    try {
+      for (let i = 0; i < count; i++) {
+        this.textContent = count > 1 ? `Queueing ${i + 1}/${count}…` : "Queueing…";
+        const body = { ...baseBody, seed: fixedSeed };
+        try {
+          const r = await fetch("/api/projects/" + PROJECT_ID + "/images", {
+            method: "POST", headers: {"Content-Type":"application/json"},
+            body: JSON.stringify(body),
+          });
+          if (!r.ok) { const t = await r.text(); throw new Error(t); }
+          const img = await r.json();
+          state.images.unshift(img);
+          state.imagesById[img.id] = img;
+          okCount++;
+        } catch (e) {
+          err("generate item", e);
+          toast("Generate " + (i + 1) + "/" + count + " failed: " + String(e).slice(0,120), "error");
+          break;
+        }
+      }
+      renderGalleryCards();
+      // Intentionally keep prompt / refs / seed in place so the user can
+      // tweak and Generate again without re-entering everything.
+      if (okCount > 0) {
+        toast(`Queued ${okCount}${okCount === count ? "" : "/" + count} — watch cards for progress.`);
+      }
+    } finally {
+      this.disabled = false;
+      this.textContent = "Generate";
+    }
+    return;
+  });
+
+  $("#btn-enhance").addEventListener("click", function () {
+    const prompt = $("#ni-prompt").value.trim();
+    if (!prompt) { toast("Type a prompt first", "warn"); return; }
+    log("enhance", prompt.slice(0, 50));
+    this.disabled = true; this.textContent = "Enhancing…";
+    fetch("/api/llm/enhance", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ prompt: prompt, project_id: PROJECT_ID }),
+    }).then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(t)))
+      .then(d => { if (d.enhanced) { $("#ni-prompt").value = d.enhanced; toast("Enhanced (" + d.provider + "/" + d.model + ")"); } })
+      .catch(e => { toast("Enhance failed: " + String(e).slice(0,120), "error"); err("enhance", e); })
+      .finally(() => { this.disabled = false; this.textContent = "✨ Enhance prompt"; });
+  });
+
+  function rerunImage(id) {
+    log("rerun", id);
+    fetch("/api/images/" + id + "/dispatch", { method: "POST" })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(() => { refreshImages(); toast("Re-queued"); })
+      .catch(e => toast("Re-run failed: " + e, "error"));
+  }
+
+  function deleteImage(id) {
+    if (!confirm("Delete this image?")) return;
+    log("delete", id);
+    fetch("/api/images/" + id, { method: "DELETE" })
+      .then(r => r.ok ? null : Promise.reject(r.status))
+      .then(() => { refreshImages(); toast("Deleted"); })
+      .catch(e => toast("Delete failed: " + e, "error"));
+  }
+
+  $("#btn-delete-project").addEventListener("click", function () {
+    if (!confirm("Delete this project AND all its files?")) return;
+    fetch("/api/projects/" + PROJECT_ID, { method: "DELETE" })
+      .then(r => r.ok ? window.location = "/" : toast("Delete failed", "error"));
+  });
+
+  $("#btn-download-zip").addEventListener("click", function () {
+    window.location = "/api/projects/" + PROJECT_ID + "/zip?include_prompts=1";
+  });
+
+  // -------- Lightbox --------
+  function openLightbox(img) {
+    let ov = document.getElementById("rb-lightbox");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "rb-lightbox";
+      ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:70;display:flex;align-items:center;justify-content:center;padding:1.5rem";
+      ov.addEventListener("click", e => { if (e.target === ov) ov.remove(); });
+      document.body.appendChild(ov);
+    } else ov.innerHTML = "";
+    const inner = document.createElement("div");
+    inner.style.cssText = "max-width:95vw;max-height:95vh;display:flex;gap:1rem;background:#1a1d22;border-radius:.5rem;padding:1rem;overflow:auto";
+    inner.id = "rb-lightbox-inner";
+    inner.addEventListener("click", e => e.stopPropagation());
+
+    // Build ref slot HTML (4 slots, prefilled).
+    const refs = (img.reference_paths || []).slice(0, 4);
+    while (refs.length < 4) refs.push("");
+    const refRows = refs.map((p, i) => (
+      '<div class="flex items-center gap-1 mb-1">' +
+        '<input class="input flex-1 text-xs" id="rb-lb-ref' + i + '" value="' + (p || "").replace(/"/g, "&quot;") + '" placeholder="reference ' + (i+1) + ' (optional)">' +
+        '<button class="btn-secondary btn text-xs py-0.5 px-2" id="rb-lb-refpick' + i + '" title="Pick from uploaded assets">Pick</button>' +
+        '<button class="btn-secondary btn text-xs py-0.5 px-2" id="rb-lb-refclear' + i + '" title="Clear this slot">×</button>' +
+      '</div>'
+    )).join("");
+
+    const seedKnown = (img.seed != null && img.seed !== "");
+    inner.innerHTML =
+      '<img src="/api/images/' + img.id + '/file?t=' + Date.now() + '" style="max-width:60vw;max-height:90vh;object-fit:contain;border-radius:.25rem">' +
+      '<div style="width:34vw;max-width:34vw;color:#e6e8ec;font-size:.875rem;line-height:1.5;display:flex;flex-direction:column;gap:.75rem">' +
+        '<div>' +
+          '<div style="font-weight:bold;margin-bottom:.25rem">Prompt</div>' +
+          '<textarea id="rb-lb-prompt" class="input w-full" rows="5" style="font-size:.875rem">' +
+             ((img.prompt || "").replace(/</g,"&lt;")) +
+          '</textarea>' +
+          (img.enhanced_prompt ? '<div class="text-[10px] text-zinc-500 mt-1">Enhanced cache will be discarded on rerun.</div>' : '') +
+        '</div>' +
+        '<div>' +
+          '<div style="font-weight:bold;margin-bottom:.25rem">Negative prompt</div>' +
+          '<textarea id="rb-lb-neg" class="input w-full" rows="2" style="font-size:.875rem">' +
+             ((img.negative_prompt || "").replace(/</g,"&lt;")) +
+          '</textarea>' +
+        '</div>' +
+        '<div>' +
+          '<div style="font-weight:bold;margin-bottom:.25rem">References (up to 4)</div>' +
+          refRows +
+        '</div>' +
+        '<div>' +
+          '<div style="font-weight:bold;margin-bottom:.25rem">Seed</div>' +
+          '<label class="inline-flex items-center gap-1 mr-3 text-xs">' +
+            '<input type="radio" name="rb-lb-seed" value="same" ' + (seedKnown ? "checked" : "disabled") + '> Same as before' +
+            (seedKnown ? ' <span class="text-zinc-500">(' + img.seed + ')</span>' : ' <span class="text-zinc-500">(unknown)</span>') +
+          '</label>' +
+          '<label class="inline-flex items-center gap-1 mr-3 text-xs">' +
+            '<input type="radio" name="rb-lb-seed" value="random"' + (seedKnown ? "" : " checked") + '> Random' +
+          '</label>' +
+          '<label class="inline-flex items-center gap-1 text-xs">' +
+            '<input type="radio" name="rb-lb-seed" value="specific"> Specific:' +
+            ' <input type="number" id="rb-lb-seed-num" class="input text-xs" style="width:9rem" placeholder="42">' +
+          '</label>' +
+        '</div>' +
+        '<div class="text-[11px] text-zinc-500">' +
+          'Size: ' + img.width + '×' + img.height +
+          ' · Status: <span class="badge b-' + img.status + '">' + img.status + '</span>' +
+        '</div>' +
+        '<div class="flex gap-2 mt-1">' +
+          '<button id="rb-lb-rerun" class="btn" style="background:#16a34a;color:white">Rerun Generation</button>' +
+          '<a class="btn btn-secondary" href="/api/images/' + img.id + '/file?download=1" download>Download</a>' +
+          '<button id="rb-lb-close" class="btn btn-secondary">Close</button>' +
+        '</div>' +
+        '<div id="rb-lb-msg" class="text-xs text-amber-300"></div>' +
+      '</div>';
+    ov.appendChild(inner);
+
+    // ---- Wire up controls ----
+    document.getElementById("rb-lb-close").addEventListener("click", () => ov.remove());
+    for (let i = 0; i < 4; i++) {
+      document.getElementById("rb-lb-refclear" + i).addEventListener("click", () => {
+        document.getElementById("rb-lb-ref" + i).value = "";
+      });
+      document.getElementById("rb-lb-refpick" + i).addEventListener("click", () => {
+        // Reuse the existing reference-picker modal — it takes a callback
+        // that gets the resolved path. We just stuff the result into slot i.
+        // The actual function in this template is `openPicker(cb)` —
+        // earlier this code referenced `openRefPicker` which doesn't exist,
+        // so the Pick button in the lightbox silently fell through to the
+        // alert. Now it opens the real Uploaded Assets picker modal.
+        if (typeof openPicker === "function") {
+          openPicker(p => { document.getElementById("rb-lb-ref" + i).value = p; });
+        } else {
+          alert("Reference picker not available — paste the file path manually.");
+        }
+      });
+    }
+
+    document.getElementById("rb-lb-rerun").addEventListener("click", async function () {
+      const btn = this;
+      const msg = document.getElementById("rb-lb-msg");
+      btn.disabled = true; btn.textContent = "Queueing…";
+
+      // Collect seed selection.
+      const seedChoice = (document.querySelector('input[name="rb-lb-seed"]:checked') || {}).value || "random";
+      let seed_mode = "random";
+      if (seedChoice === "same") seed_mode = "same";
+      else if (seedChoice === "specific") {
+        const v = parseInt(document.getElementById("rb-lb-seed-num").value, 10);
+        if (Number.isFinite(v)) seed_mode = v; else seed_mode = "random";
+      }
+
+      const refs = [];
+      for (let i = 0; i < 4; i++) {
+        const v = document.getElementById("rb-lb-ref" + i).value.trim();
+        if (v) refs.push(v);
+      }
+
+      const body = {
+        prompt: document.getElementById("rb-lb-prompt").value,
+        negative_prompt: document.getElementById("rb-lb-neg").value,
+        reference_paths: refs,
+        seed_mode: seed_mode,
+      };
+      try {
+        const r = await fetch("/api/images/" + img.id + "/rerun", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const d = await r.json();
+        msg.style.color = "#34d399";
+        msg.textContent = "Re-queued (job " + (d.job_id || "").slice(0,8) + "). The new render will replace this one when complete.";
+        toast("Rerun queued — overwriting on completion", "ok");
+        await refreshImages();
+        // Close the lightbox after a short pause so the user sees the toast.
+        setTimeout(() => ov.remove(), 900);
+      } catch (e) {
+        msg.style.color = "#f87171";
+        msg.textContent = "Rerun failed: " + String(e).slice(0, 200);
+        btn.disabled = false; btn.textContent = "Rerun Generation";
+      }
+    });
+  }
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") { const ov = document.getElementById("rb-lightbox"); if (ov) ov.remove(); }
+  });
+
+  // -------- Batch --------
+  $("#batch-commit-mode").addEventListener("change", function () {
+    $("#batch-project-name").classList.toggle("hidden", this.value !== "new");
+  });
+  $("#batch-file").addEventListener("change", function (ev) {
+    const f = ev.target.files[0]; if (!f) return;
+    log("loadBatchFile", f.name);
+    const fd = new FormData(); fd.append("file", f);
+    fetch("/api/batch/preview", { method: "POST", body: fd })
+      .then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(t)))
+      .then(d => {
+        state.batch = d.rows || [];
+        $("#batch-project-name").value = d.project_name || "";
+        renderBatchRows();
+        $("#batch-controls").classList.remove("hidden");
+        $("#batch-rows").classList.remove("hidden");
+        toast("Parsed " + state.batch.length + " rows");
+      })
+      .catch(e => toast("Parse failed: " + String(e).slice(0,120), "error"));
+    ev.target.value = "";
+  });
+  function renderBatchRows() {
+    const tb = $("#batch-tbody"); tb.innerHTML = "";
+    state.batch.forEach((row, i) => {
+      const tr = document.createElement("tr");
+      tr.className = "border-t border-zinc-800 align-top";
+      const refs = [row.ref1, row.ref2, row.ref3, row.ref4].filter(Boolean).map(r => '<div class="truncate max-w-[12rem]" title="' + r.replace(/"/g,"&quot;") + '">' + r.replace(/</g,"&lt;") + '</div>').join("");
+      const warn = (row._warnings && row._warnings.length) ? '<span class="badge b-failed" title="' + row._warnings.join("; ").replace(/"/g,"&quot;") + '">!</span>' : '<span class="badge b-queued">ok</span>';
+      tr.innerHTML =
+        '<td class="p-2 text-zinc-500">' + (i+1) + '</td>' +
+        '<td class="p-2"><textarea rows="2" class="input batch-prompt" data-i="' + i + '">' + (row.prompt||"").replace(/</g,"&lt;") + '</textarea></td>' +
+        '<td class="p-2 text-xs">' + refs + '</td>' +
+        '<td class="p-2 whitespace-nowrap">' +
+          '<input class="input w-20 batch-w" type="number" data-i="' + i + '" value="' + (row.width||1024) + '">×' +
+          '<input class="input w-20 batch-h" type="number" data-i="' + i + '" value="' + (row.height||1024) + '">' +
+        '</td>' +
+        '<td class="p-2"><input class="input w-24 batch-seed" data-i="' + i + '" value="' + (row.seed==null?"":row.seed) + '" placeholder="random"></td>' +
+        '<td class="p-2">' + warn + '</td>';
+      tb.appendChild(tr);
+    });
+    tb.addEventListener("input", function (e) {
+      const t = e.target;
+      const i = parseInt(t.dataset.i, 10);
+      if (isNaN(i) || !state.batch[i]) return;
+      if (t.classList.contains("batch-prompt")) state.batch[i].prompt = t.value;
+      else if (t.classList.contains("batch-w")) state.batch[i].width = parseInt(t.value, 10);
+      else if (t.classList.contains("batch-h")) state.batch[i].height = parseInt(t.value, 10);
+      else if (t.classList.contains("batch-seed")) state.batch[i].seed = t.value;
+    });
+  }
+
+  $("#btn-commit-batch").addEventListener("click", function () {
+    const mode = $("#batch-commit-mode").value;
+    const body = {
+      mode: mode,
+      project_id: mode === "append" ? PROJECT_ID : null,
+      project_name: $("#batch-project-name").value || null,
+      rows: state.batch || [],
+    };
+    log("commit batch", body);
+    fetch("/api/batch/commit", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(body),
+    }).then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(t)))
+      .then(d => {
+        toast("Queued " + d.queued + " jobs");
+        if (d.project_id && d.project_id !== PROJECT_ID) window.location = "/projects/" + d.project_id + "?tab=results";
+        else { setTab("results"); state.batch = []; renderBatchRows(); $("#batch-controls").classList.add("hidden"); $("#batch-rows").classList.add("hidden"); refreshImages(); }
+      })
+      .catch(e => toast("Commit failed: " + String(e).slice(0,120), "error"));
+  });
+  $("#btn-enhance-bulk").addEventListener("click", function () {
+    log("enhance bulk");
+    this.disabled = true; this.textContent = "Enhancing…";
+    const prompts = (state.batch || []).map(r => r.prompt);
+    fetch("/api/llm/enhance-bulk", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ prompts: prompts, project_id: PROJECT_ID }),
+    }).then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(t)))
+      .then(d => {
+        (d.results || []).forEach((r, i) => { if (r.enhanced && state.batch[i]) state.batch[i].prompt = r.enhanced; });
+        renderBatchRows();
+        toast("Enhanced " + d.results.length + " prompts");
+      })
+      .catch(e => toast("Bulk enhance failed: " + String(e).slice(0,120), "error"))
+      .finally(() => { this.disabled = false; this.textContent = "✨ Enhance all prompts"; });
+  });
+
+  // ============================================================
+  // Batch Render tab — full editable task list with per-batch options
+  // ============================================================
+  const br = { rows: [] };
+  function brRefresh() {
+    const tb = $("#br-tbody");
+    const empty = $("#br-empty");
+    $("#br-count").textContent = br.rows.length + " task" + (br.rows.length === 1 ? "" : "s");
+    // Clear all rows except the empty-state row
+    Array.from(tb.querySelectorAll("tr.br-row")).forEach(r => r.remove());
+    if (empty) empty.style.display = br.rows.length ? "none" : "";
+    br.rows.forEach((row, i) => {
+      const tr = document.createElement("tr");
+      tr.className = "br-row border-t border-zinc-800 align-top";
+      tr.dataset.i = i;
+      tr.innerHTML =
+        '<td class="p-2 text-zinc-500">' + (i + 1) + '</td>' +
+        '<td class="p-2"><input class="input br-name w-32" data-i="' + i + '" value="' + (row.name || "").replace(/"/g, "&quot;") + '" placeholder="optional"></td>' +
+        '<td class="p-2"><textarea rows="2" class="input br-prompt w-full" data-i="' + i + '" placeholder="What to render">' + (row.prompt || "").replace(/</g, "&lt;") + '</textarea></td>' +
+        '<td class="p-2 text-xs">' +
+          '<input class="input br-ref1 w-full mb-1" data-i="' + i + '" placeholder="ref1 path (required for Klein)" value="' + ((row.reference_paths || [])[0] || "").replace(/"/g, "&quot;") + '">' +
+          '<input class="input br-ref2 w-full mb-1" data-i="' + i + '" placeholder="ref2 (optional)" value="' + ((row.reference_paths || [])[1] || "").replace(/"/g, "&quot;") + '">' +
+          '<input class="input br-ref3 w-full mb-1" data-i="' + i + '" placeholder="ref3 (optional)" value="' + ((row.reference_paths || [])[2] || "").replace(/"/g, "&quot;") + '">' +
+          '<input class="input br-ref4 w-full"     data-i="' + i + '" placeholder="ref4 (optional)" value="' + ((row.reference_paths || [])[3] || "").replace(/"/g, "&quot;") + '">' +
+        '</td>' +
+        '<td class="p-2 whitespace-nowrap">' +
+          '<input class="input w-20 br-w" type="number" data-i="' + i + '" value="' + (row.width || 1024) + '">×' +
+          '<input class="input w-20 br-h" type="number" data-i="' + i + '" value="' + (row.height || 1024) + '">' +
+        '</td>' +
+        '<td class="p-2"><input class="input w-24 br-seed" data-i="' + i + '" value="' + (row.seed == null ? "" : row.seed) + '" placeholder="random"></td>' +
+        '<td class="p-2 align-middle"><button class="btn-danger btn text-[10px] py-1 px-2 br-del" data-i="' + i + '">×</button></td>';
+      tb.appendChild(tr);
+    });
+  }
+  function brAdd(row) {
+    br.rows.push(Object.assign({
+      name: "", prompt: "", reference_paths: [], width: 1024, height: 1024, seed: "", negative_prompt: ""
+    }, row || {}));
+    brRefresh();
+  }
+
+  $("#btn-br-add").addEventListener("click", () => brAdd({}));
+  $("#btn-br-clear").addEventListener("click", () => {
+    if (br.rows.length && !confirm("Discard all " + br.rows.length + " tasks?")) return;
+    br.rows = []; brRefresh();
+  });
+  $("#br-tbody").addEventListener("click", e => {
+    if (e.target.classList.contains("br-del")) {
+      const i = parseInt(e.target.dataset.i, 10);
+      if (!isNaN(i)) { br.rows.splice(i, 1); brRefresh(); }
+    }
+  });
+  $("#br-tbody").addEventListener("input", e => {
+    const t = e.target;
+    const i = parseInt(t.dataset.i, 10);
+    if (isNaN(i) || !br.rows[i]) return;
+    const row = br.rows[i];
+    if (t.classList.contains("br-name"))   row.name = t.value;
+    else if (t.classList.contains("br-prompt")) row.prompt = t.value;
+    else if (t.classList.contains("br-w"))      row.width  = parseInt(t.value, 10) || 1024;
+    else if (t.classList.contains("br-h"))      row.height = parseInt(t.value, 10) || 1024;
+    else if (t.classList.contains("br-seed"))   row.seed   = t.value;
+    else if (t.classList.contains("br-ref1") || t.classList.contains("br-ref2") || t.classList.contains("br-ref3") || t.classList.contains("br-ref4")) {
+      const slot = parseInt(t.className.match(/br-ref(\d)/)[1], 10) - 1;
+      const refs = (row.reference_paths || []).slice();
+      while (refs.length < 4) refs.push("");
+      refs[slot] = t.value;
+      row.reference_paths = refs.filter((v, idx) => idx <= 3 && v !== "" || idx < refs.length);
+    }
+  });
+
+  // Import CSV / JSON into the Batch Render list
+  $("#br-import").addEventListener("change", function (ev) {
+    const f = ev.target.files[0]; if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result || "");
+      try {
+        if (f.name.toLowerCase().endsWith(".json")) {
+          const data = JSON.parse(text);
+          if (Array.isArray(data.rows)) {
+            const def = data.defaults || {};
+            data.rows.forEach(r => brAdd({
+              name: r.name || "", prompt: r.prompt || "",
+              reference_paths: r.reference_paths || [r.ref1, r.ref2, r.ref3, r.ref4].filter(Boolean),
+              width: r.width || def.width || 1024, height: r.height || def.height || 1024,
+              seed: r.seed == null ? "" : r.seed, negative_prompt: r.negative_prompt || def.negative_prompt || "",
+            }));
+          }
+          if (data.output_format) $("#br-format").value = data.output_format;
+          if (data.custom_output_dir != null) $("#br-outdir").value = data.custom_output_dir;
+          if (typeof data.retain_ref1_name === "boolean") $("#br-retain-name").checked = data.retain_ref1_name;
+          if (typeof data.enhance_prompts === "boolean") $("#br-enhance").checked = data.enhance_prompts;
+          if (data.reference_base_dir != null) $("#br-refbase").value = data.reference_base_dir;
+        } else {
+          // CSV
+          const lines = text.split(/\r?\n/).filter(Boolean);
+          if (!lines.length) return;
+          const headers = lines.shift().split(",").map(s => s.trim().toLowerCase());
+          const splitCsv = line => {
+            const out = []; let cur = ""; let inQ = false;
+            for (const ch of line) {
+              if (ch === '"') inQ = !inQ;
+              else if (ch === "," && !inQ) { out.push(cur); cur = ""; }
+              else cur += ch;
+            }
+            out.push(cur);
+            return out;
+          };
+          lines.forEach(line => {
+            const cells = splitCsv(line);
+            const row = {};
+            headers.forEach((h, idx) => row[h] = cells[idx] !== undefined ? cells[idx] : "");
+            const refs = [row.ref1, row.ref2, row.ref3, row.ref4].filter(Boolean);
+            brAdd({
+              name: row.name || "", prompt: row.prompt || "",
+              reference_paths: refs,
+              width: parseInt(row.width, 10) || 1024, height: parseInt(row.height, 10) || 1024,
+              seed: row.seed || "", negative_prompt: row.negative_prompt || "",
+            });
+          });
+        }
+        toast("Imported " + br.rows.length + " task(s)");
+      } catch (e) {
+        toast("Import failed: " + e, "error");
+        err("br import", e);
+      }
+    };
+    reader.readAsText(f);
+    ev.target.value = "";
+  });
+
+  // Show/hide the override fields when the checkbox toggles.
+  const _ovr = document.getElementById("br-override-size");
+  if (_ovr) _ovr.addEventListener("change", () => {
+    const fields = document.getElementById("br-override-size-fields");
+    if (fields) fields.style.display = _ovr.checked ? "grid" : "none";
+  });
+
+  $("#btn-br-commit").addEventListener("click", async function () {
+    if (!br.rows.length) { toast("Add at least one task first", "warn"); return; }
+    // Resolve the batch-wide size override (if toggled on).
+    const ovrOn = !!(document.getElementById("br-override-size") && document.getElementById("br-override-size").checked);
+    const ovrW = ovrOn ? (parseInt(document.getElementById("br-override-w").value, 10) || 1024) : null;
+    const ovrH = ovrOn ? (parseInt(document.getElementById("br-override-h").value, 10) || 1024) : null;
+    if (ovrOn) log("batch render: overriding all dimensions to " + ovrW + "x" + ovrH);
+    const body = {
+      rows: br.rows.map(r => ({
+        prompt: r.prompt || "",
+        negative_prompt: r.negative_prompt || "",
+        reference_paths: (r.reference_paths || []).filter(Boolean),
+        // When override is on, every row uses the same width/height. Otherwise
+        // each row keeps the value imported from the CSV (or the default 1024).
+        width:  ovrOn ? ovrW : (parseInt(r.width, 10) || 1024),
+        height: ovrOn ? ovrH : (parseInt(r.height, 10) || 1024),
+        seed: (r.seed === "" || r.seed == null) ? null : r.seed,
+        name: r.name || "",
+      })),
+      output_format: $("#br-format").value || "png",
+      retain_ref1_name: $("#br-retain-name").checked,
+      custom_output_dir: $("#br-outdir").value.trim() || null,
+      reference_base_dir: $("#br-refbase").value.trim() || null,
+      enhance_prompts: $("#br-enhance").checked,
+      frame_subject: ($("#br-frame").value || "") || null,  // "on" | "off" | null=inherit
+    };
+    log("batch render commit", body);
+    this.disabled = true; this.textContent = "Queueing…";
+    try {
+      const r = await fetch("/api/batch/render/commit?project_id=" + encodeURIComponent(PROJECT_ID), {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) { const t = await r.text(); throw new Error(t); }
+      const data = await r.json();
+      const msgBits = ["Queued " + data.queued + " task(s)"];
+      if (data.enhanced_count) msgBits.push(data.enhanced_count + " enhanced");
+      if (typeof data.refs_resolved === "number" || typeof data.refs_missing === "number") {
+        msgBits.push((data.refs_resolved || 0) + " refs found, " + (data.refs_missing || 0) + " missing");
+      }
+      toast(msgBits.join(" — "), (data.refs_missing ? "warn" : "ok"));
+      if (data.refs_missing && (data.refs_unresolved || []).length) {
+        // Surface the missing paths in the activity log so the user can copy/paste them.
+        log("batch preflight: " + data.refs_missing + " missing references", data.refs_unresolved);
+        try {
+          const lines = ["The following references could NOT be located on the Robomuffin host:"]
+            .concat((data.refs_unresolved || []).map(s => "  " + s))
+            .concat(["", "Fix: either set the Reference base directory correctly OR re-upload via the Uploaded Assets tab."]);
+          alert(lines.join("\n"));
+        } catch (_) {}
+      }
+      setTab("results");
+      await refreshImages();
+    } catch (e) {
+      toast("Commit failed: " + String(e).slice(0, 140), "error");
+      err("br commit", e);
+    } finally {
+      this.disabled = false; this.textContent = "Commit & queue";
+    }
+  });
+  // initial render so the empty-state row shows
+  brRefresh();
+
+  // ============================================================
+  // Queue pause / start controls
+  // ============================================================
+  async function refreshQueueStatus() {
+    try {
+      const r = await fetch("/api/jobs/queue/status");
+      if (!r.ok) return;
+      const d = await r.json();
+      const el = $("#queue-status");
+      if (!el) return;
+      const pendBit = d.pending_count + " pending";
+      if (d.paused) {
+        el.innerHTML = '<span class="text-amber-400">⏸ PAUSED</span> · ' + pendBit;
+      } else {
+        el.innerHTML = '<span class="text-emerald-400">▶ Auto-dispatch</span> · ' + pendBit;
+      }
+    } catch (e) { /* silent */ }
+  }
+  const _bp = document.getElementById("btn-queue-pause");
+  if (_bp) _bp.addEventListener("click", async () => {
+    try { const r = await fetch("/api/jobs/queue/pause", {method:"POST"}); if (!r.ok) throw 0;
+      toast("Queue paused — new commits won't auto-dispatch", "warn");
+      await refreshQueueStatus();
+    } catch (e) { toast("Pause failed", "error"); }
+  });
+  const _bs = document.getElementById("btn-queue-start");
+  if (_bs) _bs.addEventListener("click", async () => {
+    try {
+      const r = await fetch("/api/jobs/queue/start", {method:"POST"});
+      if (!r.ok) throw 0;
+      const d = await r.json();
+      toast("Released " + d.released + " pending job(s) to workers", "ok");
+      await refreshQueueStatus();
+      await refreshImages();
+    } catch (e) { toast("Start failed", "error"); }
+  });
+  const _bx = document.getElementById("btn-queue-stop");
+  if (_bx) _bx.addEventListener("click", async () => {
+    if (!confirm("HARD STOP the queue?\n\nThis will:\n  • Pause auto-dispatch\n  • Cancel ALL queued items\n  • Cancel ALL currently-running items\n  • Tell every ComfyUI worker to /interrupt\n\nThis cannot be undone — use Retry buttons on the Batches tab to re-queue.")) return;
+    _bx.disabled = true;
+    try {
+      const r = await fetch("/api/jobs/queue/stop", {method:"POST"});
+      if (!r.ok) throw 0;
+      const d = await r.json();
+      const parts = [
+        d.drained + " drained",
+        d.pending_cancelled + " pending cancelled",
+        d.running_cancelled + " running cancelled",
+        d.images_cancelled + " images marked",
+        d.workers_interrupted + " worker(s) interrupted",
+      ];
+      toast("Queue STOPPED — " + parts.join(" · "), "error");
+      await refreshQueueStatus();
+      await refreshImages();
+      if (typeof refreshBatches === "function") await refreshBatches();
+    } catch (e) { toast("Stop failed: " + String(e).slice(0,140), "error"); }
+    finally { _bx.disabled = false; }
+  });
+  refreshQueueStatus();
+  setInterval(refreshQueueStatus, 5000);
+
+  // ============================================================
+  // Worker health strip
+  // ============================================================
+  async function refreshWorkers() {
+    try {
+      const r = await fetch("/api/workers");
+      if (!r.ok) return;
+      const d = await r.json();
+      const strip = document.getElementById("workers-strip");
+      if (!strip) return;
+      const workers = d.workers || [];
+      if (!workers.length) {
+        strip.innerHTML = '<span class="text-amber-400">no servers configured — set them in Settings</span>';
+        return;
+      }
+      strip.innerHTML = workers.map(w => {
+        // Three states: healthy (green), shaky (amber: probe failing but
+        // not yet at threshold), unhealthy (red, dropped from dispatch).
+        const failing = (w.consecutive_failures || 0) > 0 && w.healthy;
+        let dot;
+        if (!w.healthy) {
+          dot = '<span class="inline-block w-2 h-2 rounded-full bg-red-500" title="unhealthy: ' + (w.last_error || "unknown").replace(/"/g,"&quot;") + '"></span>';
+        } else if (failing) {
+          dot = '<span class="inline-block w-2 h-2 rounded-full bg-amber-400" title="transient probe failure ' + w.consecutive_failures + '/3 — still dispatching"></span>';
+        } else {
+          dot = '<span class="inline-block w-2 h-2 rounded-full bg-emerald-400" title="healthy"></span>';
+        }
+        const inFlight = w.in_flight ? '<span class="text-blue-300">' + w.in_flight + ' in flight</span>' : '<span class="text-zinc-500">idle</span>';
+        const urlShort = (w.url || "").replace(/^https?:\/\//, "").replace(/\/+$/, "");
+        const tip = (w.url || "") +
+                    (w.consecutive_failures ? "\nprobe failures: " + w.consecutive_failures + "/3" : "") +
+                    (w.last_error ? "\nlast error: " + w.last_error : "");
+        return '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800" title="' + tip.replace(/"/g,"&quot;") + '">' +
+                 dot + ' <span class="text-zinc-300">' + urlShort + '</span> · ' + inFlight +
+               '</span>';
+      }).join("");
+    } catch (e) { /* silent */ }
+  }
+  const _brp = document.getElementById("btn-workers-reprobe");
+  if (_brp) _brp.addEventListener("click", async () => {
+    _brp.disabled = true;
+    const orig = _brp.textContent;
+    _brp.textContent = "Probing…";
+    try {
+      const r = await fetch("/api/workers/probe", { method: "POST" });
+      if (!r.ok) throw 0;
+      const d = await r.json();
+      const healthy = (d.results ? Object.values(d.results).filter(v => v.healthy).length : 0);
+      const total = Object.keys(d.results || {}).length;
+      toast("Probed " + total + " server(s) — " + healthy + " healthy", (healthy === total && total > 0) ? "ok" : "warn");
+      await refreshWorkers();
+    } catch (e) { toast("Probe failed", "error"); }
+    finally { _brp.disabled = false; _brp.textContent = orig; }
+  });
+  refreshWorkers();
+  setInterval(refreshWorkers, 5000);
+
+  // ============================================================
+  // Uploaded Assets tab + Reference picker modal
+  // ============================================================
+  const uploads = { items: [], cb: null };  // cb = callback when picker resolves a path
+
+  async function refreshUploads() {
+    try {
+      const r = await fetch("/api/projects/" + PROJECT_ID + "/references");
+      if (!r.ok) throw new Error(r.status);
+      const d = await r.json();
+      uploads.items = d.items || [];
+      renderUploadsGrid();
+      renderPickerGrid();
+    } catch (e) { err("refreshUploads", e); }
+  }
+
+  function renderUploadsGrid() {
+    const grid = $("#uploads-grid");
+    const empty = $("#uploads-empty");
+    Array.from(grid.querySelectorAll(".u-card")).forEach(n => n.remove());
+    if (empty) empty.style.display = uploads.items.length ? "none" : "";
+    uploads.items.forEach(it => {
+      const div = document.createElement("div");
+      div.className = "u-card card overflow-hidden";
+      const fname = it.name;
+      div.innerHTML =
+        '<img src="' + it.url + '" class="w-full aspect-square object-cover cursor-zoom-in" data-action="view">' +
+        '<div class="p-2 text-xs">' +
+          '<div class="truncate" title="' + fname.replace(/"/g, "&quot;") + '">' + fname.replace(/</g, "&lt;") + '</div>' +
+          '<div class="flex items-center justify-between text-zinc-500 mt-1">' +
+            '<span>' + Math.round(it.size_bytes / 1024) + ' KB</span>' +
+            (it.usage_count ? '<span class="badge b-running" title="In use by ' + it.usage_count + ' image(s)">used ×' + it.usage_count + '</span>' : '') +
+          '</div>' +
+          '<div class="flex gap-1 mt-2">' +
+            '<a class="btn-secondary btn text-[10px] py-1 px-2" href="' + it.url + '" target="_blank">View</a>' +
+            '<button class="btn-danger btn text-[10px] py-1 px-2 u-del">Delete</button>' +
+          '</div>' +
+        '</div>';
+      div.querySelector(".u-del").addEventListener("click", () => deleteUpload(it));
+      const im = div.querySelector("img");
+      im.addEventListener("click", () => window.open(it.url, "_blank"));
+      grid.appendChild(div);
+    });
+  }
+
+  async function deleteUpload(it) {
+    if (!confirm("Delete " + it.name + "? This removes the file from disk.")) return;
+    try {
+      const r = await fetch("/api/projects/" + PROJECT_ID + "/references/" + encodeURIComponent(it.name), { method: "DELETE" });
+      const d = await r.json();
+      if (d.deleted) { toast("Deleted " + it.name); refreshUploads(); }
+      else if (d.in_use_by) toast("In use by " + d.in_use_count + " image(s) — delete those first.", "warn");
+      else toast("Delete failed", "error");
+    } catch (e) { toast("Delete failed: " + e, "error"); }
+  }
+
+  $("#btn-uploads-refresh").addEventListener("click", refreshUploads);
+
+  // ---- Picker modal ---------------------------------------------------------
+  function openPicker(onPick) {
+    uploads.cb = onPick || null;
+    $("#ref-picker").style.display = "flex";
+    setPickerTab("upload");
+    $("#rp-upload-status").textContent = "";
+    refreshUploads();
+  }
+  function closePicker() { $("#ref-picker").style.display = "none"; uploads.cb = null; }
+  function setPickerTab(which) {
+    const tabs = { upload: $("#rp-tab-upload"), pick: $("#rp-tab-pick") };
+    const panels = { upload: $("#rp-panel-upload"), pick: $("#rp-panel-pick") };
+    Object.entries(tabs).forEach(([k, el]) => {
+      el.classList.toggle("border-indigo-500", k === which);
+      el.classList.toggle("text-indigo-300", k === which);
+      el.classList.toggle("border-transparent", k !== which);
+      el.classList.toggle("text-zinc-400", k !== which);
+    });
+    Object.entries(panels).forEach(([k, el]) => el.classList.toggle("hidden", k !== which));
+  }
+
+  function renderPickerGrid() {
+    const grid = $("#rp-grid"); grid.innerHTML = "";
+    if (!uploads.items.length) {
+      grid.innerHTML = '<div class="col-span-full text-center text-zinc-500 py-6 text-sm">No uploaded assets yet. Use the "Upload from computer" tab.</div>';
+      return;
+    }
+    uploads.items.forEach(it => {
+      const d = document.createElement("button");
+      d.type = "button";
+      d.className = "card overflow-hidden text-left p-0 cursor-pointer hover:ring-2 hover:ring-indigo-500";
+      d.innerHTML =
+        '<img src="' + it.url + '" class="w-full aspect-square object-cover">' +
+        '<div class="p-1.5 text-[11px] truncate" title="' + it.name.replace(/"/g, "&quot;") + '">' + it.name.replace(/</g, "&lt;") + '</div>';
+      d.addEventListener("click", () => {
+        if (uploads.cb) uploads.cb(it.path);
+        closePicker();
+      });
+      grid.appendChild(d);
+    });
+  }
+
+  $("#rp-close").addEventListener("click", closePicker);
+  $("#ref-picker").addEventListener("click", e => { if (e.target.id === "ref-picker") closePicker(); });
+  $("#rp-tab-upload").addEventListener("click", () => setPickerTab("upload"));
+  $("#rp-tab-pick").addEventListener("click", () => setPickerTab("pick"));
+
+  $("#rp-file").addEventListener("change", async function (ev) {
+    const f = ev.target.files[0]; if (!f) return;
+    $("#rp-upload-status").textContent = "Uploading " + f.name + " …";
+    try {
+      const fd = new FormData(); fd.append("file", f);
+      const r = await fetch("/api/projects/" + PROJECT_ID + "/upload-reference", { method: "POST", body: fd });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      $("#rp-upload-status").textContent = "Uploaded " + d.name;
+      toast("Uploaded " + d.name);
+      // Hand the new path back to whoever opened the picker.
+      if (uploads.cb) uploads.cb(d.path);
+      await refreshUploads();
+      closePicker();
+    } catch (e) {
+      $("#rp-upload-status").textContent = "Upload failed: " + e;
+      toast("Upload failed: " + e, "error");
+    }
+    ev.target.value = "";
+  });
+
+  // Wire the Gallery's "+ Add reference image" button to open the picker.
+  $("#btn-ni-upload").addEventListener("click", () => {
+    if (refPaths.length >= 4) { toast("Already 4 references — remove one first", "warn"); return; }
+    openPicker(path => { refPaths.push(path); renderRefList(); });
+  });
+  // Direct file-upload fallback (in case anything still triggers #ni-upload).
+  $("#ni-upload").addEventListener("change", function (ev) {
+    const f = ev.target.files[0]; if (!f) return;
+    const fd = new FormData(); fd.append("file", f);
+    fetch("/api/projects/" + PROJECT_ID + "/upload-reference", { method: "POST", body: fd })
+      .then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(t)))
+      .then(d => { refPaths.push(d.path); renderRefList(); refreshUploads(); toast("Uploaded " + d.name); })
+      .catch(e => toast("Upload failed: " + e, "error"));
+    ev.target.value = "";
+  });
+
+  // Refresh uploads when the user switches to the Uploaded Assets tab.
+  const _origSetTab = setTab;
+  setTab = function (name) {
+    _origSetTab(name);
+    if (name === "uploads") refreshUploads();
+  };
+
+  // ============================================================
+  // Batches tab — list runs, show stats + elapsed, cancel/retry/clear
+  // ============================================================
+  const batches = { runs: [], pollTimer: null };
+
+  function fmtElapsed(startIso, endIso) {
+    if (!startIso) return "";
+    const start = new Date(startIso).getTime();
+    const end = endIso ? new Date(endIso).getTime() : Date.now();
+    const s = Math.max(0, Math.round((end - start) / 1000));
+    if (s < 60) return s + "s";
+    if (s < 3600) return Math.floor(s/60) + "m " + (s%60) + "s";
+    return Math.floor(s/3600) + "h " + Math.floor((s%3600)/60) + "m";
+  }
+
+  async function refreshBatches() {
+    try {
+      const r = await fetch("/api/batch/runs?project_id=" + encodeURIComponent(PROJECT_ID));
+      if (!r.ok) return;
+      const d = await r.json();
+      batches.runs = d.runs || [];
+      renderBatchesList();
+    } catch (e) { err("refreshBatches", e); }
+  }
+
+  function renderBatchesList() {
+    const list = $("#batches-list");
+    const empty = $("#batches-empty");
+    Array.from(list.querySelectorAll(".batch-card")).forEach(n => n.remove());
+    const hideCompleted = $("#batches-hide-completed").checked;
+    const visible = batches.runs.filter(r => {
+      if (!hideCompleted) return true;
+      return r.counts.queued + r.counts.running + r.counts.failed > 0;
+    });
+    if (empty) empty.style.display = visible.length ? "none" : "";
+    visible.forEach(r => list.appendChild(renderOneBatch(r)));
+  }
+
+  function renderOneBatch(r) {
+    const c = r.counts;
+    const pct = c.total ? Math.round(c.done * 100 / c.total) : 0;
+    const active = (c.queued + c.running) > 0;
+    const elapsed = fmtElapsed(r.first_created_at, active ? null : r.last_completed_at);
+    const div = document.createElement("div");
+    div.className = "batch-card card p-4";
+    div.dataset.runId = r.batch_run_id;
+    div.innerHTML =
+      '<div class="flex items-center justify-between mb-2">' +
+        '<div>' +
+          '<strong class="text-sm">Batch ' + (r.batch_run_id || "").slice(0,8) + '</strong>' +
+          (r.output_format ? ' · <span class="text-zinc-400 text-xs">' + r.output_format + '</span>' : '') +
+          (r.custom_output_dir ? ' · <span class="text-zinc-500 text-xs">→ ' + r.custom_output_dir.replace(/</g,"&lt;") + '</span>' : '') +
+        '</div>' +
+        '<div class="text-xs text-zinc-400">' +
+          'Started: ' + (r.first_created_at || "?") + (elapsed ? '  ·  elapsed ' + elapsed : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="text-sm mb-1">' +
+        c.total + ' tasks · ' +
+        '<span class="text-green-300">' + c.done + ' done</span>' + ' · ' +
+        '<span class="text-blue-300">' + c.running + ' running</span>' + ' · ' +
+        '<span class="text-amber-300">' + c.queued + ' queued</span>' + ' · ' +
+        '<span class="text-red-300">' + c.failed + ' failed</span>' +
+      '</div>' +
+      '<div class="h-2 mb-3 rounded bg-zinc-800 overflow-hidden">' +
+        '<div class="h-full bg-indigo-500 transition-all" style="width:' + pct + '%"></div>' +
+      '</div>' +
+      '<div class="flex flex-wrap gap-1">' +
+        '<button class="btn-secondary btn text-xs btn-cancel-queued" '   + (c.queued ? '' : 'disabled') + '>Cancel queued (' + c.queued + ')</button>' +
+        '<button class="btn-secondary btn text-xs btn-retry-failed"  '  + (c.failed ? '' : 'disabled') + '>Retry failed (' + c.failed + ')</button>' +
+        '<button class="btn-secondary btn text-xs btn-retry-all">Re-run entire batch (' + c.total + ')</button>' +
+        '<button class="btn-secondary btn text-xs btn-clear-failed"  '  + (c.failed ? '' : 'disabled') + '>Clear failed (' + c.failed + ')</button>' +
+        '<button class="btn-danger btn text-xs btn-delete-batch">Delete batch</button>' +
+      '</div>';
+    div.addEventListener("click", e => onBatchAction(e, r));
+    return div;
+  }
+
+  async function onBatchAction(e, r) {
+    const t = e.target;
+    if (!t.matches("button")) return;
+    const id = r.batch_run_id;
+    let url = null, body = {};
+    let confirmMsg = null;
+    if (t.classList.contains("btn-cancel-queued")) {
+      url = "/api/batch/runs/" + id + "/cancel-queued";
+    } else if (t.classList.contains("btn-retry-failed")) {
+      url = "/api/batch/runs/" + id + "/retry-failed";
+    } else if (t.classList.contains("btn-retry-all")) {
+      confirmMsg = "Re-run all " + r.counts.total + " images in this batch?";
+      url = "/api/batch/runs/" + id + "/retry-all";
+    } else if (t.classList.contains("btn-clear-failed")) {
+      confirmMsg = "Delete all " + r.counts.failed + " FAILED images in this batch?";
+      url = "/api/batch/runs/" + id + "/clear-failed";
+    } else if (t.classList.contains("btn-delete-batch")) {
+      confirmMsg = "Delete the ENTIRE batch (" + r.counts.total + " images, including done)?";
+      url = "/api/batch/runs/" + id;
+    } else return;
+    if (confirmMsg && !confirm(confirmMsg)) return;
+    t.disabled = true;
+    try {
+      const method = url === ("/api/batch/runs/" + id) ? "DELETE" : "POST";
+      const res = await fetch(url, { method, headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      toast("Done: " + JSON.stringify(data));
+      await refreshBatches();
+      await refreshImages();
+    } catch (err) {
+      toast("Action failed: " + String(err).slice(0,120), "error");
+    } finally { t.disabled = false; }
+  }
+
+  // ---- Project-wide cleanup buttons (Batches tab header) ----
+  const _bcc = document.getElementById("btn-clear-cancelled");
+  if (_bcc) _bcc.addEventListener("click", async function () {
+    if (!confirm("Delete every CANCELLED image in this project, across all batches?")) return;
+    this.disabled = true;
+    try {
+      const r = await fetch("/api/batch/cancelled/clear?project_id=" + encodeURIComponent(PROJECT_ID), { method: "POST" });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      toast("Cleared " + d.deleted + " cancelled image(s)");
+      await refreshBatches();
+      await refreshImages();
+    } catch (e) { toast("Clear failed: " + String(e).slice(0,140), "error"); }
+    finally { this.disabled = false; }
+  });
+
+  const _bpa = document.getElementById("btn-purge-all");
+  if (_bpa) _bpa.addEventListener("click", async function () {
+    if (!confirm("PURGE ALL: delete EVERY image in this project regardless of status?\n\nThis will:\n  - Drain the in-memory queue\n  - Cancel any in-flight jobs\n  - Delete every image row + on-disk output\n\nCannot be undone.")) return;
+    if (!confirm("Last chance \u2014 really purge ALL images?")) return;
+    this.disabled = true;
+    const orig = this.textContent;
+    this.textContent = "Purging\u2026";
+    try {
+      const r = await fetch("/api/batch/purge-all?project_id=" + encodeURIComponent(PROJECT_ID), { method: "POST" });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      toast("Purged " + d.deleted + " image(s) \u00b7 " + d.files_removed + " files removed \u00b7 " + d.in_flight_jobs_cancelled + " in-flight cancelled", "warn");
+      await refreshBatches();
+      await refreshImages();
+    } catch (e) { toast("Purge failed: " + String(e).slice(0,140), "error"); }
+    finally { this.disabled = false; this.textContent = orig; }
+  });
+
+  // ============================================================
+  // SSE — live job event stream from the runner
+  // ============================================================
+  // Three independent mechanisms keep the gallery in sync so no single
+  // failure leaves the user looking at stale cards:
+  //   1. EventSource subscription (instant updates on the happy path)
+  //   2. Polling every 8s (bulletproof catch-up if SSE silently dies)
+  //   3. Page-Visibility listener that refreshes on tab focus.
+  // This block has been wiped by Cowork sync round-trips multiple times —
+  // when subscribeSSE/startPolling/maybeRefresh aren't defined, calls
+  // from the init block throw ReferenceError (caught silently), the
+  // browser never opens /api/jobs/stream, and the user has to refresh
+  // manually to see ANY status change. So we define them here right
+  // before they're called.
+  let _sseRef = null;
+  let _sseRetryMs = 1000;
+  let _lastRefreshAt = 0;
+  const POLL_MS = 8000;
+
+  function maybeRefresh(force) {
+    const now = Date.now();
+    if (!force && now - _lastRefreshAt < 1500) return;
+    _lastRefreshAt = now;
+    refreshImages();
+  }
+
+  function subscribeSSE() {
+    try {
+      if (_sseRef) { try { _sseRef.close(); } catch (_) {} _sseRef = null; }
+      const es = new EventSource("/api/jobs/stream");
+      _sseRef = es;
+      log("SSE subscribed");
+      const apply = data => {
+        if (!data) return;
+        if (data.image_id) {
+          const img = state.imagesById[data.image_id];
+          if (img) {
+            if (data.status) img.status = data.status;
+            if (data.progress != null) img.progress = data.progress;
+            if (data.error) img.error = data.error;
+            if (data.status === "done" || data.status === "failed" || data.status === "cancelled") {
+              if (!state.firstDoneAt && data.status === "done") state.firstDoneAt = Date.now();
+              maybeRefresh(true);
+              if (typeof refreshBatches === "function") refreshBatches();
+            } else {
+              renderGalleryCards();
+            }
+            return;
+          }
+        }
+        maybeRefresh(false);
+      };
+      ["job_started","job_progress","job_completed","job_failed","job_retrying","job_cancelled"].forEach(n => {
+        es.addEventListener(n, e => { try { apply(JSON.parse(e.data)); } catch (_) {} });
+      });
+      es.addEventListener("open", () => { _sseRetryMs = 1000; log("SSE open"); });
+      es.onerror = e => {
+        log("SSE error \u2014 retry in " + _sseRetryMs + "ms");
+        try { es.close(); } catch (_) {}
+        _sseRef = null;
+        setTimeout(subscribeSSE, _sseRetryMs);
+        _sseRetryMs = Math.min(_sseRetryMs * 2, 30000);
+      };
+    } catch (e) {
+      console.error("SSE subscribe failed", e);
+      setTimeout(subscribeSSE, _sseRetryMs);
+      _sseRetryMs = Math.min(_sseRetryMs * 2, 30000);
+    }
+  }
+
+  function startPolling() {
+    setInterval(() => {
+      const hasMotion = state.images.some(i => i.status === "running" || i.status === "queued");
+      if (hasMotion) maybeRefresh(false);
+    }, POLL_MS);
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      log("tab visible \u2014 refreshing");
+      maybeRefresh(true);
+      if (!_sseRef) subscribeSSE();
+    }
+  });
+  window.addEventListener("focus", () => maybeRefresh(false));
+
+  // ============================================================
+  // PAGE INIT
+  // ============================================================
+  try { state.batch = []; } catch (e) { console.warn("init: state.batch", e); }
+  try { if (typeof refreshSetupBanner === "function") refreshSetupBanner(); }
+  catch (e) { console.warn("init: refreshSetupBanner", e); }
+  try { refreshImages(); }
+  catch (e) { console.error("init: refreshImages failed", e); }
+  try { if (typeof refreshBatches === "function") refreshBatches(); }
+  catch (e) { console.warn("init: refreshBatches", e); }
+  try { if (typeof refreshUploads === "function") refreshUploads(); }
+  catch (e) { console.warn("init: refreshUploads", e); }
+  try { if (typeof refreshWorkers === "function") refreshWorkers(); }
+  catch (e) { console.warn("init: refreshWorkers", e); }
+  try { if (typeof refreshQueueStatus === "function") refreshQueueStatus(); }
+  catch (e) { console.warn("init: refreshQueueStatus", e); }
+  try { subscribeSSE(); }
+  catch (e) { console.warn("init: subscribeSSE", e); }
+  try { startPolling(); }
+  catch (e) { console.warn("init: startPolling", e); }
+  console.log("[robomuffin] project view init complete");
+})();
+</script>
+{% endblock %}
