@@ -43,6 +43,11 @@ async def create_all() -> None:
         ("app_settings", "frame_subject_positive_override",  "TEXT",    "NULL"),
         ("app_settings", "frame_subject_negative_override",  "TEXT",    "NULL"),
         ("image",        "frame_subject",                    "TEXT",    "NULL"),
+        ("app_settings", "qwen_gguf_variant",                "TEXT",    "'Q5_K_S'"),
+        ("image",        "edit_of_image_id",                 "TEXT",    "NULL"),
+        ("image",        "physical_size",                    "TEXT",    "NULL"),
+        ("image",        "physical_dimensions",              "TEXT",    "NULL"),
+        ("image",        "relative_size",                    "TEXT",    "NULL"),
     ]
     async with engine.begin() as conn:
         for table, col, typ, default in additive_columns:

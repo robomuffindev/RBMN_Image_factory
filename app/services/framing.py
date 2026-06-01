@@ -148,3 +148,67 @@ def enhancer_instruction(strength: str = "moderate") -> str:
         "framed and clearly the focus — centered, medium-close composition, "
         "filling a substantial portion of the frame. Avoid wide or distant shots."
     )
+
+
+# ---------------------------------------------------------------------------
+# Scale-hint clause builder
+# ---------------------------------------------------------------------------
+#
+# Why this exists: when the user feeds a reference image of a small object
+# (a 3" water spout, a smartphone, a pill bottle) to an image-edit model,
+# the model has no way to know the object's real-world size and tends to
+# render it filling the frame or comically large relative to surroundings.
+# A short, descriptive scale clause appended to the prompt anchors the model
+# to a believable scale.
+#
+# Both FLUX Klein and Qwen Image Edit 2511 honor this kind of plain-language
+# scale guidance because their text encoders are trained on captions that
+# routinely include size phrases ("the small water spout, about 3 inches
+# tall, sitting on a kitchen counter"). We just need to format the user's
+# import fields into one of those captioning patterns.
+
+
+def build_scale_clause(
+    *,
+    physical_size: str | None = None,
+    physical_dimensions: str | None = None,
+    relative_size: str | None = None,
+) -> str:
+    """Build a natural-language scale clause from the optional CSV fields.
+
+    Returns an empty string if all three inputs are blank. Otherwise it
+    produces a clause like:
+        ", at realistic scale (approximately 3 inches tall, 5x3x2 inches,
+        roughly the size of a smartphone), shown in correct proportion to
+        the surrounding environment"
+
+    The clause is meant to be APPENDED to the existing prompt — never
+    replace user content. Idempotent in the sense that the runner can
+    safely re-build it on every retry without prompt bloat (it always
+    overwrites the previous build, never accumulates).
+    """
+    bits: list[str] = []
+    ps = (physical_size or "").strip()
+    pd = (physical_dimensions or "").strip()
+    rs = (relative_size or "").strip()
+    if ps: bits.append(f"approximately {ps}")
+    if pd: bits.append(f"{pd}")
+    if rs: bits.append(f"roughly the size of a {rs}" if not rs.lower().startswith(("the ", "a ", "an ")) else f"roughly {rs}")
+    if not bits:
+        return ""
+    inside = ", ".join(bits)
+    return (
+        f", at realistic real-world scale ({inside}), "
+        f"rendered in correct proportion to the surrounding environment"
+    )
+
+
+def apply_scale_hint(prompt: str, **fields: str | None) -> str:
+    """Convenience wrapper: append the scale clause to a prompt if any
+    of the optional fields are provided. Returns the prompt unchanged when
+    no scale info is available."""
+    clause = build_scale_clause(**fields)
+    if not clause:
+        return prompt or ""
+    base = (prompt or "").rstrip(" ,.")
+    return base + clause

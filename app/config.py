@@ -45,6 +45,20 @@ class FactorySettings(BaseSettings):
     # -------------------------------------------------------------------- data
     factory_data_dir: Path | None = Field(default=None)
 
+    # ----------------------------------------------------------- embedding
+    # Set if Robomuffin is being consumed by another local app (e.g. the
+    # WP/WooCommerce admin tool described in INTEGRATION.md). When non-empty,
+    # every /api/* request must carry header `X-Robomuffin-Key: <value>`.
+    # Leave empty to disable auth (default — assumes you're on a trusted
+    # local network).
+    factory_api_key: str = Field(default="")
+    # Comma-separated origins allowed by the CORS middleware. The default
+    # covers the typical "local app on a non-default port" case. Add the
+    # actual origin of the embedding app if it lives on a different port.
+    factory_cors_origins: str = Field(
+        default="http://localhost:8080,http://127.0.0.1:8080,http://localhost:5173,http://127.0.0.1:5173"
+    )
+
     # ----------------------------------------------------------- seed defaults
     # Values used only to *seed* AppSettings on first DB creation. After that
     # the DB row is authoritative and edits happen through the Settings UI.
@@ -104,6 +118,11 @@ class FactorySettings(BaseSettings):
         """Create every directory required for the app to operate."""
         for p in (self.data_dir, self.logs_dir, self.llm_logs_dir, self.projects_dir):
             p.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse FACTORY_CORS_ORIGINS into a list of origin URLs."""
+        return [o.strip() for o in (self.factory_cors_origins or "").split(",") if o.strip()]
 
     # --------------------------------------------------------------- list helpers
     def comfyui_urls_list(self) -> list[str]:

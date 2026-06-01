@@ -2,9 +2,15 @@
 # - ref1..ref4 can be either an ABSOLUTE path (C:\refs\hero.png) or a BARE filename (hero.png).
 # - Bare filenames are resolved against the "Reference base directory" you set in the Batch Render tab.
 # - Robomuffin opens each file LOCALLY and uploads it to your ComfyUI server at job time.
+# - The three OPTIONAL scale-hint columns help the model render the subject at correct real-world scale:
+#     size           — free-form size text, e.g. "3 inches tall", "10cm wide"
+#     dimensions     — explicit WxHxD, e.g. "5x3x2 inches"
+#     relative_size  — comparison anchor, e.g. "a smartphone", "a coffee mug"
+#   Leave any of them blank to skip — the runner only weaves them into the prompt when present.
 # Remove this comment block before importing — CSV doesn't accept # lines.
-prompt,ref1,ref2,ref3,ref4,width,height,seed,negative_prompt,name
-"Place the product on a marble kitchen counter at golden hour, natural daylight from a window on the left.",hero-bottle.jpg,,,,1024,1024,,blurry,hero_kitchen
-"Same product, modern industrial loft setting, dramatic side lighting, concrete walls in background.",hero-bottle.jpg,,,,1024,1024,,blurry,hero_loft
-"Outdoor lifestyle shot, hands holding the product, blurred forest background, bokeh.",hero-bottle.jpg,hands-holding.jpg,,,1024,1024,random,blurry,hero_outdoor
-"Studio product photo on white seamless backdrop, soft umbrella lighting from above, crisp shadows.",C:\different-folder\product-alt.png,,,,1024,1024,42,blurry,hero_white_absolute
+prompt,ref1,ref2,ref3,ref4,width,height,seed,negative_prompt,name,size,dimensions,relative_size
+"Place the product on a marble kitchen counter at golden hour, natural daylight from a window on the left.",hero-bottle.jpg,,,,1024,1024,,blurry,hero_kitchen,"9 inches tall","9x3x3 inches","a tall water bottle"
+"Same product, modern industrial loft setting, dramatic side lighting, concrete walls in background.",hero-bottle.jpg,,,,1024,1024,,blurry,hero_loft,"9 inches tall","9x3x3 inches","a tall water bottle"
+"Outdoor lifestyle shot, hands holding the product, blurred forest background, bokeh.",hero-bottle.jpg,hands-holding.jpg,,,1024,1024,random,blurry,hero_outdoor,"9 inches tall","9x3x3 inches","a tall water bottle"
+"Mounted to the side of a marble countertop, kitchen scene, correct scale relative to counter.",water-spout.webp,,,,1024,1024,42,"floating, oversized, dominant",kitchen_spout,"3 inches tall","3x2x1 inches","a coffee mug"
+"Studio product photo on white seamless backdrop, soft umbrella lighting from above, crisp shadows.",C:\different-folder\product-alt.png,,,,1024,1024,42,blurry,hero_white_absolute,"9 inches tall","9x3x3 inches","a tall water bottle"

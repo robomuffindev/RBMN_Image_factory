@@ -23,7 +23,39 @@ _log = get_logger("factory.batch")
 RECOGNIZED_COLUMNS = {
     "prompt", "negative_prompt", "ref1", "ref2", "ref3", "ref4",
     "width", "height", "seed", "enhance", "name",
+    # Scale hints — free-form text describing the subject's real-world size
+    # so the model renders it in correct proportion to the surroundings.
+    # All three are optional; supply any subset.
+    "size", "dimensions", "relative_size",
 }
+
+
+# Synonyms that CSV-makers commonly type. We canonicalize to the three
+# names the runner expects (size, dimensions, relative_size).
+COLUMN_ALIASES = {
+    "physical_size":        "size",
+    "real_size":            "size",
+    "actual_size":          "size",
+    "physical_dimensions":  "dimensions",
+    "dims":                 "dimensions",
+    "scale":                "relative_size",
+    "relative":             "relative_size",
+}
+
+
+def _scale_value(raw: dict, key: str) -> str | None:
+    """Read a scale-hint column with alias support. Returns trimmed string
+    or None if blank / absent."""
+    if key in raw:
+        v = (raw.get(key) or "").strip()
+        if v:
+            return v
+    for alias, target in COLUMN_ALIASES.items():
+        if target == key and alias in raw:
+            v = (raw.get(alias) or "").strip()
+            if v:
+                return v
+    return None
 
 
 @dataclass
@@ -39,6 +71,11 @@ class BatchRow:
     seed: int | str | None = None  # int or "random"
     enhance: bool | None = None
     name: str = ""
+    # Optional scale hints — woven into the prompt by the runner before
+    # submitting to ComfyUI. See app/services/framing.py:build_scale_clause.
+    size: str | None = None
+    dimensions: str | None = None
+    relative_size: str | None = None
     _warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +91,9 @@ class BatchRow:
             "seed": self.seed,
             "enhance": self.enhance,
             "name": self.name,
+            "size": self.size,
+            "dimensions": self.dimensions,
+            "relative_size": self.relative_size,
             "_warnings": self._warnings,
         }
 
@@ -142,6 +182,9 @@ def parse_csv(content: str) -> ParsedBatch:
             seed=_coerce_seed(raw.get("seed")),
             enhance=_coerce_bool(raw.get("enhance")),
             name=(raw.get("name") or "").strip(),
+            size=_scale_value(raw, "size"),
+            dimensions=_scale_value(raw, "dimensions"),
+            relative_size=_scale_value(raw, "relative_size"),
         )
         batch.rows.append(_validate(row, batch.defaults))
     return batch
@@ -169,6 +212,9 @@ def parse_json(content: str) -> ParsedBatch:
             seed=_coerce_seed(raw.get("seed")),
             enhance=_coerce_bool(raw.get("enhance")),
             name=(raw.get("name") or "").strip(),
+            size=_scale_value(raw, "size"),
+            dimensions=_scale_value(raw, "dimensions"),
+            relative_size=_scale_value(raw, "relative_size"),
         )
         batch.rows.append(_validate(row, batch.defaults))
     return batch

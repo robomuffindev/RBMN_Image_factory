@@ -40,6 +40,12 @@ class CommitRow(BaseModel):
     seed: int | str | None = None
     enhance: bool | None = None
     name: str = ""
+    # Optional scale hints — get woven into the prompt by the runner so the
+    # model renders the subject at correct real-world scale relative to the
+    # surrounding environment. Free-form text; all three are optional.
+    size: str | None = None                # e.g. "3 inches tall"
+    dimensions: str | None = None          # e.g. "5x3x2 inches"
+    relative_size: str | None = None       # e.g. "the size of a smartphone"
 
 
 class CommitReq(BaseModel):
@@ -97,6 +103,11 @@ async def commit(req: CommitReq, session: AsyncSession = Depends(get_session)) -
             height=r.height or 1024,
             seed=seed,
             status=ImageStatus.QUEUED,
+            # Scale hints — None if not supplied; trimmed so blank cells
+            # don't accidentally append an empty "(, )" clause to the prompt.
+            physical_size=(r.size or "").strip() or None,
+            physical_dimensions=(r.dimensions or "").strip() or None,
+            relative_size=(r.relative_size or "").strip() or None,
         )
         session.add(img)
         project.image_count = (project.image_count or 0) + 1
@@ -125,10 +136,15 @@ async def commit(req: CommitReq, session: AsyncSession = Depends(get_session)) -
 
 @router.get("/example.csv", response_class=PlainTextResponse)
 async def example_csv() -> PlainTextResponse:
+    """Refreshed example CSV showing every supported column, including the
+    three optional scale-hint columns (size / dimensions / relative_size)
+    that tell the model the subject's real-world size so it renders at
+    a believable scale instead of filling the frame."""
     body = (
-        "prompt,ref1,ref2,ref3,ref4,width,height,seed,negative_prompt,enhance,name\n"
-        '"a wide cinematic shot of a misty forest at dawn",,,,,1024,1024,random,,true,forest_dawn\n'
-        '"a robot kitten sitting on the same forest log",refs/kitten.png,,,,1024,1024,42,,true,robokitten\n'
+        "prompt,ref1,ref2,ref3,ref4,width,height,seed,negative_prompt,enhance,name,size,dimensions,relative_size\n"
+        '"a wide cinematic shot of a misty forest at dawn",,,,,1536,864,random,,true,forest_dawn,,,\n'
+        '"a robot kitten sitting on the same forest log",refs/kitten.png,,,,1024,1024,42,,true,robokitten,"8 inches tall","8x4x3 inches","a small house cat"\n'
+        '"product photo of a water spout in a modern kitchen, mounted to the counter, in correct scale",refs/spout.webp,refs/kitchen.jpg,,,1024,1024,random,"floating, oversized, dominant",true,kitchen_spout,"3 inches tall","3x2x1 inches","a coffee mug"\n'
     )
     return PlainTextResponse(body, headers={"Content-Disposition": 'attachment; filename="batch_example.csv"'})
 
@@ -145,6 +161,10 @@ class BatchRenderRow(BaseModel):
     height: int = 1024
     seed: int | str | None = None
     name: str = ""
+    # Optional scale hints (see CommitRow above for details).
+    size: str | None = None
+    dimensions: str | None = None
+    relative_size: str | None = None
 
 
 class BatchRenderCommit(BaseModel):
@@ -413,6 +433,10 @@ async def batch_render_commit(
             custom_output_dir=req.custom_output_dir or None,
             batch_run_id=run_id,
             frame_subject=_frame,
+            # Scale hints — None if blank so the runner skips the clause builder.
+            physical_size=(getattr(r, "size", None) or "").strip() or None,
+            physical_dimensions=(getattr(r, "dimensions", None) or "").strip() or None,
+            relative_size=(getattr(r, "relative_size", None) or "").strip() or None,
         )
         session.add(img)
         project.image_count = (project.image_count or 0) + 1

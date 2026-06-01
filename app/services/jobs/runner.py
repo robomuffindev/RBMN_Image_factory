@@ -39,8 +39,11 @@ from app.services.comfyui.workflow import (
     klein_workflow_path_for_refs,
     load_workflow,
     prepare_klein_workflow,
+    prepare_qwen_workflow,
+    qwen_workflow_path_for_refs,
     remove_missing_nodes,
     stamp_unique_filename_prefix,
+    workflow_path_for_model,
 )
 from app.services.jobs.events import job_event_broadcaster
 from app.services.jobs.queue import queue, queue_summary, recover_running_jobs, repopulate_from_db
@@ -260,13 +263,19 @@ async def _run_via_gpt_image(job_id: str, job, image, project, s_row) -> None:
             _log.warning("runner.gpt_output.convert_failed", error=str(exc), fallback="png")
             local_path = local_path.with_suffix(".png"); local_path.write_bytes(png_bytes)
 
-    # Thumbnail (best-effort)
+    # Thumbnail (best-effort) — stored in a `.thumbnails/` subfolder so the
+    # user's output dir contains exactly one file per generated image, not
+    # two. A 176-image batch was producing ~352 files because every output
+    # was paired with a `thumb_*.jpg` sibling. Hidden dir keeps Windows
+    # Explorer / Finder out of the way for users browsing renders.
     thumb_path = None
     try:
         from PIL import Image as PILImage
+        thumbs_dir = out_dir / ".thumbnails"
+        thumbs_dir.mkdir(parents=True, exist_ok=True)
         with PILImage.open(local_path) as im:
             im.thumbnail((512, 512))
-            tp = out_dir / f"thumb_{local_path.stem}.jpg"
+            tp = thumbs_dir / f"thumb_{local_path.stem}.jpg"
             if im.mode in ("RGBA", "P"): im = im.convert("RGB")
             im.save(tp, "JPEG", quality=85)
             thumb_path = str(tp)
@@ -322,7 +331,7 @@ async def _process_one(job_id: str) -> None:
     # ─── Engine routing ──────────────────────────────────────────────────────
     # Read AppSettings to decide whether to use ComfyUI or GPT Image API.
     from app.services import settings_service
-    from app.services.framing import apply_framing, is_enabled as _framing_enabled
+    from app.services.framing import apply_framing, is_enabled as _framing_enabled, build_scale_clause
     async with get_sessionmaker()() as session:
         s_row = await settings_service.get_or_create(session)
     use_gpt = bool(getattr(s_row, "use_gpt_image", False))
@@ -335,8 +344,27 @@ async def _process_one(job_id: str) -> None:
         per_image=getattr(image, "frame_subject", None),
         global_default=bool(getattr(s_row, "frame_subject_default", False)),
     )
+    # Scale hint — appended BEFORE framing so the framing scaffold (if any)
+    # comes last in the final prompt. Built from the three optional CSV/JSON
+    # import columns: physical_size, physical_dimensions, relative_size.
+    # See app/services/framing.py:build_scale_clause for the wording.
+    _base_prompt = image.enhanced_prompt or image.prompt or ""
+    _scale = build_scale_clause(
+        physical_size=getattr(image, "physical_size", None),
+        physical_dimensions=getattr(image, "physical_dimensions", None),
+        relative_size=getattr(image, "relative_size", None),
+    )
+    if _scale:
+        _base_prompt = _base_prompt.rstrip(" ,.") + _scale
+        _log.info(
+            "runner.scale.applied",
+            image_id=image.id,
+            physical_size=getattr(image, "physical_size", None),
+            physical_dimensions=getattr(image, "physical_dimensions", None),
+            relative_size=getattr(image, "relative_size", None),
+        )
     framed = apply_framing(
-        prompt=image.enhanced_prompt or image.prompt,
+        prompt=_base_prompt,
         negative=image.negative_prompt or "",
         enabled=framing_on,
         strength=getattr(s_row, "frame_subject_strength", "moderate") or "moderate",
@@ -396,23 +424,42 @@ async def _process_one(job_id: str) -> None:
         loop = asyncio.get_event_loop()
 
         ref_paths = image.reference_paths or []
-        wf_path = klein_workflow_path_for_refs(WORKFLOWS_DIR, len(ref_paths))
+        # Pick the workflow JSON based on the configured image_model_type
+        # (flux2_klein_9b → klein_*ref.json, qwen_edit_2511 → qwen_*ref.json).
+        _model_type = (getattr(s_row, "image_model_type", "flux2_klein_9b") or "flux2_klein_9b")
+        _qwen_variant = (getattr(s_row, "qwen_gguf_variant", "Q5_K_S") or "Q5_K_S")
+        wf_path = workflow_path_for_model(WORKFLOWS_DIR, _model_type, len(ref_paths))
         if not wf_path.exists():
             raise ComfyUIWorkflowError(f"workflow not found: {wf_path}")
+        _log.info("runner.workflow.selected", model_type=_model_type, wf=str(wf_path.name),
+                  ref_count=len(ref_paths), qwen_variant=_qwen_variant if _model_type == "qwen_edit_2511" else None)
 
         remote_refs = await loop.run_in_executor(None, lambda: _upload_refs(client, ref_paths))
         seed = image.seed if image.seed is not None else random.randint(1, 2_000_000_000)
 
         def _build_and_submit() -> tuple[str, dict[str, Any]]:
-            wf = prepare_klein_workflow(
-                wf_path,
-                prompt=getattr(image, "_framed_prompt", None) or image.enhanced_prompt or image.prompt,
-                width=image.width,
-                height=image.height,
-                seed=seed,
-                ref_images=remote_refs,
-                negative_prompt=getattr(image, "_framed_negative", None) or image.negative_prompt,
-            )
+            # Branch to the correct workflow preparer.
+            if _model_type == "qwen_edit_2511":
+                wf = prepare_qwen_workflow(
+                    wf_path,
+                    prompt=getattr(image, "_framed_prompt", None) or image.enhanced_prompt or image.prompt,
+                    width=image.width,
+                    height=image.height,
+                    seed=seed,
+                    ref_images=remote_refs,
+                    negative_prompt=getattr(image, "_framed_negative", None) or image.negative_prompt,
+                    gguf_variant=_qwen_variant,
+                )
+            else:
+                wf = prepare_klein_workflow(
+                    wf_path,
+                    prompt=getattr(image, "_framed_prompt", None) or image.enhanced_prompt or image.prompt,
+                    width=image.width,
+                    height=image.height,
+                    seed=seed,
+                    ref_images=remote_refs,
+                    negative_prompt=getattr(image, "_framed_negative", None) or image.negative_prompt,
+                )
             wf = flatten_group_nodes(wf)
             # Capability discovery — best-effort.
             try:
@@ -554,13 +601,18 @@ async def _process_one(job_id: str) -> None:
                 local_path = local_path.with_suffix(".png")
                 local_path.write_bytes(output_bytes)
 
-        # Thumbnail (best-effort)
+        # Thumbnail (best-effort) — written into `.thumbnails/` subfolder so
+        # the user's output dir contains exactly one file per generated
+        # image. Pre-fix behaviour wrote `thumb_*.jpg` siblings into the
+        # same folder, doubling the visible file count.
         thumb_path: str | None = None
         try:
             from PIL import Image as PILImage
+            thumbs_dir = out_dir / ".thumbnails"
+            thumbs_dir.mkdir(parents=True, exist_ok=True)
             with PILImage.open(local_path) as im:
                 im.thumbnail((512, 512))
-                tp = out_dir / f"thumb_{local_path.stem}.jpg"
+                tp = thumbs_dir / f"thumb_{local_path.stem}.jpg"
                 if im.mode in ("RGBA", "P"):
                     im = im.convert("RGB")
                 im.save(tp, "JPEG", quality=85)
@@ -773,6 +825,7 @@ async def start_runner() -> None:
     """Start the background runner task. Called from FastAPI lifespan startup."""
     global _runner_task, _stop_requested
     if _runner_task is not None and not _runner_task.done():
+      
         _log.warning("runner.start.already_running")
         return
     _stop_requested = False

@@ -68,8 +68,14 @@ class AppSettings(SQLModel, table=True):
     ollama_model: str | None = Field(default=None)
     default_llm_provider: str | None = Field(default=None)
 
-    # Image generation
+    # Image generation. Supported model identifiers:
+    #   "flux2_klein_9b"  — FLUX.2 Klein 9B via ComfyUI (default)
+    #   "qwen_edit_2511"  — Qwen Image Edit 2511 (GGUF) via ComfyUI
     image_model_type: str = Field(default="flux2_klein_9b")
+    # GGUF variant for Qwen Image Edit 2511 — picks which quantization
+    # the UnetLoaderGGUF node references. Q5_K_S = fastest/smallest,
+    # Q8_0 = highest quality. Only used when image_model_type == "qwen_edit_2511".
+    qwen_gguf_variant: str = Field(default="Q5_K_S")
     image_system_prompt_overrides: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
     image_prompt_guidance: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
 
@@ -163,6 +169,27 @@ class Image(SQLModel, table=True):
     # Per-image override for the framing toggle. NULL → inherit AppSettings.frame_subject_default.
     # "on" / "off" — keep as string so NULL can mean "use global default".
     frame_subject: str | None = Field(default=None)
+    # When non-NULL, this image is an "edit candidate" generated for another
+    # image's lightbox-edit flow. Candidates are hidden from the main gallery
+    # listing — they only appear under their parent image's Edit panel.
+    # On "Use this" promotion: parent's file goes to <dir>/_replaced/ with a
+    # serial suffix and the candidate's content replaces it; the candidate
+    # row itself is then deleted.
+    edit_of_image_id: str | None = Field(default=None, index=True)
+
+    # Scale hints — optional CSV/JSON import columns that help the model
+    # render the subject at the correct real-world scale relative to the
+    # surrounding environment. Common failure mode without these: a small
+    # accessory (e.g. a 3" water spout) is generated huge because the model
+    # has no anchor for its true size. All three are free-form text and the
+    # runner weaves them into the prompt before submitting to ComfyUI.
+    #   physical_size:       absolute size text, e.g. "3 inches tall", "10 cm wide"
+    #   physical_dimensions: explicit WxHxD, e.g. "5x3x2 inches"
+    #   relative_size:       comparison anchor, e.g. "size of a smartphone",
+    #                                              "fits in palm of a hand"
+    physical_size: str | None = Field(default=None)
+    physical_dimensions: str | None = Field(default=None)
+    relative_size: str | None = Field(default=None)
 
     parameters: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     error: str | None = Field(default=None)
@@ -192,16 +219,15 @@ class Job(SQLModel, table=True):
     completed_at: str | None = Field(default=None)
 
 
-
 class LlmCallLog(SQLModel, table=True):
     __tablename__ = "llm_call_log"
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     provider: str = Field(index=True)
     model: str = Field(index=True)
-    purpose: str = Field(default="")          # e.g. "enhance", "batch_render_enhance"
+    purpose: str = Field(default="")
     project_id: str | None = Field(default=None, index=True)
     image_id: str | None = Field(default=None, index=True)
-    request_summary: str = Field(default="")  # truncated, redacted
+    request_summary: str = Field(default="")
     response_summary: str = Field(default="")
     input_tokens: int | None = Field(default=None)
     output_tokens: int | None = Field(default=None)

@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}Compare Folders — Robomuffin Image Factory{% endblock %}
+{% block content %}
+<main class="max-w-7xl mx-auto px-6 py-6">
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-2xl font-semibold">Compare Folders</h1>
+    <a href="/tools" class="text-sm text-indigo-300 hover:underline">← back to Tools</a>
+  </div>
+  <p class="text-zinc-400 text-sm mb-5">
+    Type two folder paths on this machine. The tool scans both, pairs images with
+    matching filenames (case-insensitive), and ignores files that don't have a
+    match in the other folder. Click any thumbnail pair to open a full-screen
+    A/B viewer with arrow-key + space-bar toggle.
+  </p>
+
+  <div class="card p-4 mb-5">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <label class="block text-sm">
+        <span class="font-medium">Folder A</span>
+        <input id="cmp-a" class="input mt-1" placeholder="C:\Users\hexum\Pictures\render-set-1">
+      </label>
+      <label class="block text-sm">
+        <span class="font-medium">Folder B</span>
+        <input id="cmp-b" class="input mt-1" placeholder="C:\Users\hexum\Pictures\render-set-2">
+      </label>
+    </div>
+    <div class="mt-3 flex items-center gap-2">
+      <button id="cmp-scan" class="btn">Scan + Compare</button>
+      <span id="cmp-status" class="text-xs text-zinc-400"></span>
+    </div>
+  </div>
+
+  <!-- Headers row showing the two folder labels above the grid. -->
+  <div id="cmp-headers" class="hidden grid-cols-2 gap-3 mb-2 text-xs text-zinc-400 sticky top-16 bg-zinc-950 py-2 z-20"
+       style="display:none">
+    <div class="text-center"><strong class="text-zinc-200">A</strong> <span id="cmp-head-a"></span></div>
+    <div class="text-center"><strong class="text-zinc-200">B</strong> <span id="cmp-head-b"></span></div>
+  </div>
+
+  <div id="cmp-grid" class="space-y-3"></div>
+  <div id="cmp-empty" class="card p-8 text-center text-zinc-500" style="display:none">
+    No matching filenames found in both folders.
+  </div>
+</main>
+
+<!-- Toast (reuses the global toast pattern; defined inline since this page
+     doesn't share the project_view IIFE that normally defines `toast`). -->
+<div id="toast" class="hidden fixed bottom-4 right-4 z-50 p-3 rounded-md shadow-lg"></div>
+
+<script>
+(function () {
+  const $ = sel => document.querySelector(sel);
+  function toast(msg, kind) {
+    const t = $("#toast");
+    t.textContent = msg;
+    t.className = "fixed bottom-4 right-4 z-50 p-3 rounded-md shadow-lg " +
+      (kind === "error" ? "bg-red-700 text-white" :
+       kind === "warn"  ? "bg-amber-600 text-white" :
+                          "bg-emerald-700 text-white");
+    t.classList.remove("hidden");
+    clearTimeout(window._toastT);
+    window._toastT = setTimeout(() => t.classList.add("hidden"), 4000);
+  }
+
+  // The pairs returned by the API: [{name, a_url, b_url}].
+  let pairs = [];
+
+  document.getElementById("cmp-scan").addEventListener("click", async function () {
+    const a = $("#cmp-a").value.trim();
+    const b = $("#cmp-b").value.trim();
+    if (!a || !b) { toast("Type two folder paths first.", "warn"); return; }
+    this.disabled = true; this.textContent = "Scanning…";
+    $("#cmp-status").textContent = "";
+    try {
+      const r = await fetch("/api/tools/compare/scan", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ folder_a: a, folder_b: b }),
+      });
+      if (!r.ok) { throw new Error(await r.text()); }
+      const data = await r.json();
+      pairs = data.pairs || [];
+      $("#cmp-head-a").textContent = data.folder_a + "  (" + (data.total_a || 0) + " images)";
+      $("#cmp-head-b").textContent = data.folder_b + "  (" + (data.total_b || 0) + " images)";
+      $("#cmp-headers").style.display = pairs.length ? "grid" : "none";
+      $("#cmp-empty").style.display = pairs.length ? "none" : "block";
+      $("#cmp-status").textContent =
+        pairs.length + " matched pair(s)" +
+        (data.unmatched_a ? " · " + data.unmatched_a + " only in A" : "") +
+        (data.unmatched_b ? " · " + data.unmatched_b + " only in B" : "");
+      renderGrid();
+    } catch (e) {
+      toast("Scan failed: " + String(e).slice(0, 200), "error");
+    } finally {
+      this.disabled = false; this.textContent = "Scan + Compare";
+    }
+  });
+
+  function renderGrid() {
+    const grid = $("#cmp-grid");
+    grid.innerHTML = "";
+    pairs.forEach((p, idx) => {
+      const row = document.createElement("div");
+      row.className = "card p-2";
+      row.innerHTML =
+        '<div class="text-xs text-zinc-400 mb-1 truncate" title="' + p.name.replace(/"/g,"&quot;") + '">' +
+          p.name.replace(/</g,"&lt;") + '</div>' +
+        '<div class="grid grid-cols-2 gap-2">' +
+          '<img src="' + p.a_url + '" class="w-full aspect-square object-cover rounded cursor-zoom-in" data-side="a" data-idx="' + idx + '" loading="lazy">' +
+          '<img src="' + p.b_url + '" class="w-full aspect-square object-cover rounded cursor-zoom-in" data-side="b" data-idx="' + idx + '" loading="lazy">' +
+        '</div>';
+      grid.appendChild(row);
+    });
+    grid.querySelectorAll("img").forEach(im => {
+      im.addEventListener("click", () => openLightbox(parseInt(im.dataset.idx, 10), im.dataset.side));
+    });
+  }
+
+  // ---- Lightbox with A/B toggle ----
+  // Space, ←, →, A, B all flip which side is showing.
+  let lbIdx = -1;
+  let lbSide = "a";
+  function openLightbox(idx, side) {
+    lbIdx = idx; lbSide = side;
+    let ov = document.getElementById("cmp-lightbox");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "cmp-lightbox";
+      ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:80;display:flex;align-items:center;justify-content:center;padding:1rem;flex-direction:column;gap:1rem";
+      ov.addEventListener("click", e => { if (e.target === ov) ov.remove(); });
+      document.body.appendChild(ov);
+    } else ov.innerHTML = "";
+    paintLightbox();
+  }
+  function paintLightbox() {
+    const ov = document.getElementById("cmp-lightbox");
+    if (!ov) return;
+    const p = pairs[lbIdx];
+    if (!p) { ov.remove(); return; }
+    const src = (lbSide === "a") ? p.a_url : p.b_url;
+    const otherSide = (lbSide === "a") ? "B" : "A";
+    ov.innerHTML =
+      '<div class="text-zinc-300 text-sm">' +
+        '<strong class="text-indigo-300">' + (lbSide === "a" ? "A" : "B") + '</strong>  ·  ' +
+        p.name.replace(/</g,"&lt;") +
+        '  <span class="text-zinc-500 ml-3">(space / arrows / a / b to toggle, esc to close)</span>' +
+      '</div>' +
+      '<div id="cmp-lb-imgwrap" style="position:relative;display:inline-block">' +
+        '<img id="cmp-lb-img" src="' + src + '" style="max-width:95vw;max-height:80vh;object-fit:contain;border-radius:0.4rem;display:block">' +
+        '<div id="cmp-lb-lens" style="position:absolute;pointer-events:none;display:none;width:200px;height:200px;border:2px solid #6366f1;border-radius:50%;box-shadow:0 4px 24px rgba(0,0,0,.6);background-repeat:no-repeat;background-color:#0b0d11;z-index:5"></div>' +
+      '</div>' +
+      '<div class="flex gap-2">' +
+        '<button id="cmp-lb-toggle" class="btn">Show ' + otherSide + '</button>' +
+        '<button id="cmp-lb-prev"   class="btn btn-secondary">← prev pair</button>' +
+        '<button id="cmp-lb-next"   class="btn btn-secondary">next pair →</button>' +
+        '<button id="cmp-lb-close"  class="btn btn-secondary">close</button>' +
+      '</div>';
+    document.getElementById("cmp-lb-toggle").addEventListener("click", () => { lbSide = (lbSide === "a") ? "b" : "a"; paintLightbox(); });
+    document.getElementById("cmp-lb-prev").addEventListener("click",   () => { if (lbIdx > 0)              { lbIdx--; paintLightbox(); } });
+    document.getElementById("cmp-lb-next").addEventListener("click",   () => { if (lbIdx < pairs.length-1) { lbIdx++; paintLightbox(); } });
+    document.getElementById("cmp-lb-close").addEventListener("click",  () => ov.remove());
+
+    // ---- Magnifier (cursor-following 2.5x lens) ----
+    // Matches the lens in the project lightbox. We wait for the image to
+    // load so naturalWidth/Height are known, then drive a 200px circular
+    // lens whose background-image is the source at 2.5x the rendered size.
+    (function setupCompareMagnifier() {
+      const wrap = document.getElementById("cmp-lb-imgwrap");
+      const img  = document.getElementById("cmp-lb-img");
+      const lens = document.getElementById("cmp-lb-lens");
+      if (!wrap || !img || !lens) return;
+      const ZOOM = 2.5;
+      const LENS = 200;
+      function arm() {
+        if (!img.naturalWidth) return;
+        const rect = img.getBoundingClientRect();
+        const zoomW = rect.width * ZOOM;
+        const zoomH = rect.height * ZOOM;
+        lens.style.backgroundImage = 'url("' + img.src + '")';
+        lens.style.backgroundSize = zoomW + 'px ' + zoomH + 'px';
+      }
+      img.addEventListener("load", arm);
+      if (img.complete) arm();
+      wrap.addEventListener("mousemove", e => {
+        const rect = img.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+          lens.style.display = "none"; return;
+        }
+        if (!img.naturalWidth) return;
+        lens.style.display = "block";
+        const lx = Math.max(0, Math.min(rect.width - LENS, x - LENS/2));
+        const ly = Math.max(0, Math.min(rect.height - LENS, y - LENS/2));
+        lens.style.left = lx + "px";
+        lens.style.top  = ly + "px";
+        lens.style.backgroundPosition = (-(x * ZOOM - LENS/2)) + "px " + (-(y * ZOOM - LENS/2)) + "px";
+      });
+      wrap.addEventListener("mouseleave", () => { lens.style.display = "none"; });
+    })();
+  }
+  document.addEventListener("keydown", e => {
+    if (!document.getElementById("cmp-lightbox")) return;
+    if (e.key === "Escape") { document.getElementById("cmp-lightbox").remove(); return; }
+    if (e.key === " " || e.key === "ArrowUp" || e.key === "ArrowDown" || e.key.toLowerCase() === "a" || e.key.toLowerCase() === "b") {
+      e.preventDefault();
+      if (e.key.toLowerCase() === "a") lbSide = "a";
+      else if (e.key.toLowerCase() === "b") lbSide = "b";
+      else lbSide = (lbSide === "a") ? "b" : "a";
+      paintLightbox();
+    } else if (e.key === "ArrowLeft" && lbIdx > 0) {
+      e.preventDefault(); lbIdx--; paintLightbox();
+    } else if (e.key === "ArrowRight" && lbIdx < pairs.length-1) {
+      e.preventDefault(); lbIdx++; paintLightbox();
+    }
+  });
+})();
+</script>
+{% endblock %}

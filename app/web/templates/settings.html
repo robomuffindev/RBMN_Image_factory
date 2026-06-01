@@ -178,8 +178,26 @@
         <input id="def-max-par" class="input mt-1" type="number" min="1" max="4" value="{{ settings.max_parallel_per_worker or 1 }}"></label>
       <label class="block text-sm col-span-2">Image model
         <select id="def-model" class="input mt-1">
-          <option value="flux2_klein_9b" selected>FLUX.2 Klein 9B</option>
+          <option value="flux2_klein_9b" {% if (settings.image_model_type or 'flux2_klein_9b') == 'flux2_klein_9b' %}selected{% endif %}>FLUX.2 Klein 9B (default — ComfyUI)</option>
+          <option value="qwen_edit_2511" {% if settings.image_model_type == 'qwen_edit_2511' %}selected{% endif %}>Qwen Image Edit 2511 (GGUF — ComfyUI)</option>
         </select>
+      </label>
+      <!-- Qwen-only: pick the GGUF quantization for the UnetLoaderGGUF node.
+           Visibility is toggled by the JS at the bottom of this file based
+           on the selected image model. Saved to AppSettings.qwen_gguf_variant. -->
+      <label class="block text-sm col-span-2" id="qwen-variant-wrap" style="{% if settings.image_model_type != 'qwen_edit_2511' %}display:none{% endif %}">
+        Qwen GGUF variant
+        <select id="def-qwen-variant" class="input mt-1">
+          <option value="Q5_K_S" {% if (settings.qwen_gguf_variant or 'Q5_K_S') == 'Q5_K_S' %}selected{% endif %}>Q5_K_S (smallest, fastest)</option>
+          <option value="Q6_K"   {% if settings.qwen_gguf_variant == 'Q6_K'   %}selected{% endif %}>Q6_K (balanced)</option>
+          <option value="Q8_0"   {% if settings.qwen_gguf_variant == 'Q8_0'   %}selected{% endif %}>Q8_0 (largest, highest quality)</option>
+        </select>
+        <span class="block text-xs text-zinc-500 mt-1">
+          Place the chosen <code>qwen-image-edit-2511-*.gguf</code> in your ComfyUI <code>models/unet/</code> folder.
+          Also requires <code>Qwen2.5-VL-7B-Instruct-UD-Q4_K_S.gguf</code> in <code>models/clip/</code>,
+          <code>qwen_image_vae.safetensors</code> in <code>models/vae/</code>, and
+          <code>Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors</code> in <code>models/loras/</code>.
+        </span>
       </label>
     </div>
     <label class="flex items-center gap-2 mt-3 text-sm">
@@ -367,10 +385,23 @@
       frame_subject_positive_override: ($("#opt-frame-pos").value || "").trim() || null,
       frame_subject_negative_override: ($("#opt-frame-neg").value || "").trim() || null,
       image_model_type: model,
+      qwen_gguf_variant: $("#def-qwen-variant") ? $("#def-qwen-variant").value : "Q5_K_S",
       project_dir: $("#project-dir").value || null,
       image_system_prompt_overrides: sysOverride,
       image_prompt_guidance: guidance,
     }, provs);
+  }
+
+  // Show/hide the Qwen GGUF variant dropdown based on which image model is selected.
+  // The wrapper has id="qwen-variant-wrap"; only Qwen needs its GGUF picker visible.
+  function _syncModelDeps() {
+    const m = $("#def-model").value;
+    const wrap = document.getElementById("qwen-variant-wrap");
+    if (wrap) wrap.style.display = (m === "qwen_edit_2511") ? "" : "none";
+  }
+  if (document.getElementById("def-model")) {
+    $("#def-model").addEventListener("change", _syncModelDeps);
+    _syncModelDeps();   // run once on page load to honor the saved setting
   }
 
   $("#btn-save").addEventListener("click", function () {

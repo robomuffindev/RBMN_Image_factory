@@ -141,6 +141,7 @@ $RECYCLE.BIN/
 # for reference. The workflows the APP actually uses are bundled at
 # app/services/comfyui/workflows/. Don't bloat the repo with a second copy.
 Klein-Workflow-Examples/
+Qwen_edit_examples/
 ComfyUI/
 models/
 *.safetensors

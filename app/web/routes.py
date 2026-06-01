@@ -75,3 +75,15 @@ async def settings_page(request: Request, session: AsyncSession = Depends(get_se
 @router.get("/help", response_class=HTMLResponse)
 async def help_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "help.html", {"version": __version__})
+
+
+@router.get("/tools", response_class=HTMLResponse)
+async def tools_index(request: Request) -> HTMLResponse:
+    """Landing page with cards for each available utility tool."""
+    return templates.TemplateResponse(request, "tools.html", {"version": __version__})
+
+
+@router.get("/tools/compare", response_class=HTMLResponse)
+async def tools_compare(request: Request) -> HTMLResponse:
+    """Folder-to-folder image compare tool."""
+    return templates.TemplateResponse(request, "tools_compare.html", {"version": __version__})

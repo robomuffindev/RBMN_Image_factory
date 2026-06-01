@@ -68,6 +68,10 @@ def _serialize_image(img: Image) -> dict[str, Any]:
         "retain_ref1_name": img.retain_ref1_name,
         "custom_output_dir": img.custom_output_dir,
         "batch_run_id": img.batch_run_id,
+        "edit_of_image_id": getattr(img, "edit_of_image_id", None),
+        "physical_size":       getattr(img, "physical_size", None),
+        "physical_dimensions": getattr(img, "physical_dimensions", None),
+        "relative_size":       getattr(img, "relative_size", None),
         "error": img.error,
         "created_at": img.created_at,
         "completed_at": img.completed_at,
@@ -79,9 +83,13 @@ def _serialize_image(img: Image) -> dict[str, Any]:
 async def list_images(project_id: str, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     # Sanity-log every list call so we can see "refresh returns 0 rows" failures
     # in factory.log without DB introspection.
+    # Filter out edit candidates — those belong under their parent image's
+    # Edit panel only, not in the main gallery listing.
     rows = (
         await session.execute(
-            select(Image).where(Image.project_id == project_id).order_by(Image.created_at.desc())
+            select(Image)
+            .where(Image.project_id == project_id, Image.edit_of_image_id.is_(None))
+            .order_by(Image.created_at.desc())
         )
     ).scalars().all()
     proj = await session.get(Project, project_id)
@@ -379,3 +387,274 @@ async def image_card(image_id: str, request: Request, session: AsyncSession = De
     if img is None:
         return HTMLResponse("", status_code=200)
     return templates.TemplateResponse(request, "partials/image_card.html", {"img": img})
+
+
+# =============================================================================
+# Lightbox Edit flow — spawn edit candidates, list them, promote one, discard
+# =============================================================================
+
+class EditGenerateBody(BaseModel):
+    """Body for /edits/generate — fork N edit candidates off an existing image.
+
+    The original image becomes ref1 for each candidate so the model has the
+    visual anchor; the user's prompt describes the desired change."""
+    prompt: str = ""
+    negative_prompt: str = ""
+    seed_mode: str | int | None = None   # "same" | "random" | int | null
+    count: int = 1                       # how many variations to generate
+
+
+@images_router.post("/{image_id}/edits/generate")
+async def edits_generate(
+    image_id: str,
+    req: EditGenerateBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Create N edit candidates whose visual reference is the original image.
+
+    Each candidate inherits the original's width/height/output_format/
+    custom_output_dir/batch_run_id but uses the user-supplied prompt and
+    has edit_of_image_id pointing at the original — so it stays out of the
+    main gallery listing until promoted via /edits/{cid}/promote.
+    """
+    orig = await session.get(Image, image_id)
+    if orig is None:
+        raise HTTPException(status_code=404, detail="image not found")
+    if not orig.output_path:
+        raise HTTPException(status_code=400, detail="original image has no rendered output yet")
+    import os as _os
+    if not _os.path.isfile(orig.output_path):
+        raise HTTPException(status_code=400, detail=f"original file missing on disk: {orig.output_path}")
+    count = max(1, min(int(req.count or 1), 8))
+
+    # Seed handling — same/random/specific
+    def _seed_for_iter(i: int) -> int | None:
+        sm = req.seed_mode
+        if sm == "same":
+            return orig.seed
+        if isinstance(sm, int):
+            # Use offsets so multiple variations don't share the exact seed.
+            return sm + i
+        try:
+            iv = int(sm)
+            return iv + i
+        except (TypeError, ValueError):
+            return None  # runner will roll a fresh seed
+
+    created: list[str] = []
+    for i in range(count):
+        cand = Image(
+            project_id=orig.project_id,
+            name=(orig.name or "") + f" — edit {i+1}",
+            prompt=(req.prompt or "").strip() or orig.prompt,
+            enhanced_prompt=None,
+            negative_prompt=(req.negative_prompt or orig.negative_prompt or "").strip(),
+            reference_paths=[orig.output_path],     # original file as the visual ref
+            width=orig.width,
+            height=orig.height,
+            seed=_seed_for_iter(i),
+            parameters={"edit_index": i + 1, "edit_of": image_id},
+            status=ImageStatus.QUEUED,
+            output_format=orig.output_format or "png",
+            retain_ref1_name=False,
+            # Candidates render into the project's default outputs dir — NOT
+            # the parent's custom_output_dir — so they don't clutter the user's
+            # final delivery folder. Promotion later writes the chosen one
+            # into the parent's actual location.
+            custom_output_dir=None,
+            batch_run_id=None,
+            frame_subject=orig.frame_subject,
+            edit_of_image_id=image_id,
+        )
+        session.add(cand)
+        await session.flush()
+        await _enqueue_image(session, cand, priority=1)   # higher priority so edits jump the queue
+        created.append(cand.id)
+    await session.commit()
+    _log.info("image.edits.generated", parent_id=image_id, count=count, candidate_ids=created)
+    return {"parent_id": image_id, "candidate_ids": created, "count": count}
+
+
+@images_router.get("/{image_id}/edits")
+async def edits_list(image_id: str, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """Return every edit candidate for this image, newest first."""
+    rows = (
+        await session.execute(
+            select(Image)
+            .where(Image.edit_of_image_id == image_id)
+            .order_by(Image.created_at.desc())
+        )
+    ).scalars().all()
+    return {"parent_id": image_id, "items": [_serialize_image(r) for r in rows]}
+
+
+@images_router.delete("/{image_id}/edits/{candidate_id}")
+async def edits_discard(
+    image_id: str,
+    candidate_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Discard a single edit candidate (delete row + on-disk file)."""
+    cand = await session.get(Image, candidate_id)
+    if cand is None or cand.edit_of_image_id != image_id:
+        raise HTTPException(status_code=404, detail="candidate not found for that parent")
+    import os as _os
+    for attr in ("output_path", "thumbnail_path"):
+        p = getattr(cand, attr, None)
+        if p:
+            try:
+                if _os.path.isfile(p): _os.remove(p)
+            except Exception:
+                pass
+    from sqlalchemy import delete as _del
+    await session.execute(_del(Job).where(Job.image_id == candidate_id))
+    await session.flush()
+    await session.delete(cand)
+    await session.commit()
+    _log.info("image.edits.discarded", parent_id=image_id, candidate_id=candidate_id)
+    return {"deleted": True, "candidate_id": candidate_id}
+
+
+@images_router.post("/{image_id}/edits/{candidate_id}/promote")
+async def edits_promote(
+    image_id: str,
+    candidate_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Promote an edit candidate to replace the original image.
+
+    Sequence:
+      1. Move the original's file into ``<orig_dir>/_replaced/`` with a
+         serialized suffix (so the user can recover it later).
+      2. Re-encode the candidate's image content into the original's file
+         format and write it to the original's output_path. The output
+         filename stays exactly the same — anything pointing at the
+         original (websites, downstream pipelines) keeps working.
+      3. Update the original Image row's seed + prompt + completed_at + thumb
+         to reflect the new content.
+      4. Delete the candidate row + its on-disk file.
+    """
+    orig = await session.get(Image, image_id)
+    if orig is None:
+        raise HTTPException(status_code=404, detail="original image not found")
+    cand = await session.get(Image, candidate_id)
+    if cand is None or cand.edit_of_image_id != image_id:
+        raise HTTPException(status_code=404, detail="candidate not found for that parent")
+    if cand.status != ImageStatus.DONE or not cand.output_path:
+        raise HTTPException(status_code=400, detail=f"candidate not yet rendered (status={cand.status})")
+
+    import os as _os
+    import shutil as _shutil
+    from PIL import Image as _PILImage
+    orig_path = orig.output_path
+    cand_path = cand.output_path
+    if not orig_path or not _os.path.isfile(orig_path):
+        raise HTTPException(status_code=400, detail="original file missing on disk")
+    if not _os.path.isfile(cand_path):
+        raise HTTPException(status_code=400, detail="candidate file missing on disk")
+
+    orig_dir  = _os.path.dirname(orig_path)
+    orig_name = _os.path.basename(orig_path)
+    orig_stem, orig_ext = _os.path.splitext(orig_name)
+    # 1) Move original to <orig_dir>/_replaced/<stem>_replaced_N<ext>.
+    replaced_dir = _os.path.join(orig_dir, "_replaced")
+    try:
+        _os.makedirs(replaced_dir, exist_ok=True)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"can't create _replaced dir: {exc!s}")
+    # Find next serial: scan existing files for {stem}_replaced_{N}{ext}
+    n = 1
+    while True:
+        candidate_archive = _os.path.join(replaced_dir, f"{orig_stem}_replaced_{n}{orig_ext}")
+        if not _os.path.exists(candidate_archive):
+            break
+        n += 1
+    try:
+        _shutil.move(orig_path, candidate_archive)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"failed to archive original: {exc!s}")
+
+    # Also archive the original thumbnail if present.
+    archived_thumb = None
+    if orig.thumbnail_path and _os.path.isfile(orig.thumbnail_path):
+        try:
+            t_name = _os.path.basename(orig.thumbnail_path)
+            t_stem, t_ext = _os.path.splitext(t_name)
+            archived_thumb = _os.path.join(replaced_dir, f"{t_stem}_replaced_{n}{t_ext}")
+            _shutil.move(orig.thumbnail_path, archived_thumb)
+        except Exception as exc:
+            _log.warning("image.edits.thumb_archive_failed", error=str(exc))
+
+    # 2) Re-encode candidate content → original's path + format.
+    try:
+        with _PILImage.open(cand_path) as im:
+            im.load()
+            out_fmt = (orig_ext.lstrip(".") or "png").upper()
+            if out_fmt in ("JPG", "JPEG"):
+                out_fmt = "JPEG"
+                if im.mode in ("RGBA", "P"):
+                    im = im.convert("RGB")
+                im.save(orig_path, "JPEG", quality=92, optimize=True, progressive=True)
+            elif out_fmt == "WEBP":
+                im.save(orig_path, "WEBP", quality=92, method=6)
+            else:
+                im.save(orig_path, out_fmt)
+    except Exception as exc:
+        # Roll back the archive move so the user doesn't lose their original.
+        try: _shutil.move(candidate_archive, orig_path)
+        except Exception: pass
+        raise HTTPException(status_code=500, detail=f"failed to write new image: {exc!s}")
+
+    # Best-effort: build a fresh thumbnail at the original's thumbnail_path.
+    new_thumb = None
+    if orig.thumbnail_path:
+        try:
+            with _PILImage.open(orig_path) as im:
+                im.thumbnail((512, 512))
+                if im.mode in ("RGBA", "P"):
+                    im = im.convert("RGB")
+                im.save(orig.thumbnail_path, "JPEG", quality=85)
+                new_thumb = orig.thumbnail_path
+        except Exception as exc:
+            _log.warning("image.edits.thumb_build_failed", error=str(exc))
+
+    # 3) Update parent row with new metadata from the candidate.
+    orig.prompt = cand.prompt or orig.prompt
+    orig.enhanced_prompt = cand.enhanced_prompt
+    orig.negative_prompt = cand.negative_prompt or orig.negative_prompt
+    orig.seed = cand.seed if cand.seed is not None else orig.seed
+    orig.status = ImageStatus.DONE
+    orig.error = None
+    from datetime import datetime as _dt
+    orig.completed_at = _dt.now().isoformat(timespec="seconds")
+    if new_thumb:
+        orig.thumbnail_path = new_thumb
+
+    # 4) Delete the candidate row + its jobs + its leftover on-disk file.
+    from sqlalchemy import delete as _del
+    try:
+        if _os.path.isfile(cand_path):
+            _os.remove(cand_path)
+    except Exception:
+        pass
+    if cand.thumbnail_path:
+        try:
+            if _os.path.isfile(cand.thumbnail_path):
+                _os.remove(cand.thumbnail_path)
+        except Exception:
+            pass
+    await session.execute(_del(Job).where(Job.image_id == candidate_id))
+    await session.flush()
+    await session.delete(cand)
+    await session.commit()
+
+    _log.warning("image.edits.promoted",
+                 parent_id=image_id, candidate_id=candidate_id,
+                 archived_to=candidate_archive, new_thumb=new_thumb)
+    return {
+        "promoted": True,
+        "parent_id": image_id,
+        "candidate_id": candidate_id,
+        "archived_to": candidate_archive,
+        "new_output_path": orig_path,
+    }

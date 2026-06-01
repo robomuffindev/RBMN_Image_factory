@@ -20,6 +20,7 @@ from app.api import jobs as jobs_api
 from app.api import llm as llm_api
 from app.api import projects as projects_api
 from app.api import settings as settings_api
+from app.api import tools as tools_api
 from app.config import PROJECT_ROOT, get_settings
 from app.db.engine import dispose_engine
 from app.db.migrations import run_all as run_migrations
@@ -96,6 +97,58 @@ def create_app() -> FastAPI:
         version=__version__,
         lifespan=lifespan,
     )
+
+    # --- CORS for embedding from another local app ---
+    # Origins are configurable via FACTORY_CORS_ORIGINS env (comma-separated).
+    # Defaults cover the common "local admin app on :8080 or Vite :5173" case.
+    try:
+        from fastapi.middleware.cors import CORSMiddleware
+        cors_origins = settings.cors_origins_list
+        if cors_origins:
+            app.add_middleware(
+                CORSMiddleware,
+                allow_origins=cors_origins,
+                allow_credentials=True,
+                allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+                allow_headers=["*"],
+                expose_headers=["*"],
+            )
+            get_logger("factory.cors").info("cors.configured", origins=cors_origins)
+    except Exception as exc:  # noqa: BLE001
+        get_logger("factory.cors").warning("cors.setup_failed", error=str(exc))
+
+    # --- Optional API-key auth ---
+    # When FACTORY_API_KEY is non-empty in .env, every /api/* request must
+    # carry header `X-Robomuffin-Key: <value>`. Browser-side requests from
+    # this app's own UI bypass auth (the middleware only gates /api/*, and
+    # the UI uses same-origin fetches that include cookies). Other clients
+    # (the Python SDK, the embedding app) send the header directly.
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse as _JSONResponse
+
+    class APIKeyMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            key = (settings.factory_api_key or "").strip()
+            if not key:
+                return await call_next(request)
+            # Only gate /api/* — leave /static, /, /projects/{id}, etc.
+            # accessible so the embedded iframe / UI can load.
+            path = request.url.path
+            if not path.startswith("/api/"):
+                return await call_next(request)
+            # Allow CORS preflights through without auth so the embedding
+            # app can negotiate.
+            if request.method == "OPTIONS":
+                return await call_next(request)
+            sent = request.headers.get("X-Robomuffin-Key") or request.query_params.get("api_key", "")
+            if sent != key:
+                return _JSONResponse(
+                    status_code=401,
+                    content={"detail": "missing or invalid X-Robomuffin-Key"},
+                )
+            return await call_next(request)
+
+    app.add_middleware(APIKeyMiddleware)
     app.add_middleware(RequestLogMiddleware)
     app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="static")
     app.include_router(batch_api.router)
@@ -110,6 +163,7 @@ def create_app() -> FastAPI:
     app.include_router(llm_api.router)
     app.include_router(projects_api.router)
     app.include_router(settings_api.router)
+    app.include_router(tools_api.router)
     app.include_router(web_routes.router)
 
     @app.exception_handler(Exception)

@@ -204,13 +204,14 @@
             <th class="p-2">Name</th>
             <th class="p-2">Prompt</th>
             <th class="p-2">References (paths on the ComfyUI host)</th>
-            <th class="p-2">Size</th>
+            <th class="p-2">Output</th>
             <th class="p-2">Seed</th>
+            <th class="p-2" title="Optional scale hints — describe the subject's real-world size so the model renders it at the correct proportion to the environment instead of filling the frame.">Scale hints</th>
             <th class="p-2"></th>
           </tr>
         </thead>
         <tbody id="br-tbody">
-          <tr id="br-empty"><td colspan="7" class="p-4 text-center text-zinc-500">No tasks yet. Click <strong>+ Add row</strong> or drop a CSV/JSON file above.</td></tr>
+          <tr id="br-empty"><td colspan="8" class="p-4 text-center text-zinc-500">No tasks yet. Click <strong>+ Add row</strong> or drop a CSV/JSON file above.</td></tr>
         </tbody>
       </table>
     </div>
@@ -626,8 +627,37 @@
     )).join("");
 
     const seedKnown = (img.seed != null && img.seed !== "");
+    // Build reference thumbnails strip — click any to open in a minimal
+    // preview overlay so you can A/B compare against the main image.
+    const lbRefs = (img.references_detail || (img.reference_paths || []).map(p => ({path:p, exists:false, name:(p||"").split(/[\\/]/).pop()})));
+    let lbRefsHTML = "";
+    if (lbRefs.length) {
+      lbRefsHTML =
+        '<div>' +
+          '<div style="font-weight:bold;margin-bottom:.25rem">Reference images</div>' +
+          '<div class="flex flex-wrap gap-2" id="rb-lb-refs">' +
+            lbRefs.map((r, idx) => {
+              const lbl = (r.name || "ref"+(idx+1)).replace(/</g,"&lt;");
+              return (
+                '<div class="rb-lb-refthumb cursor-pointer text-center" data-refidx="' + idx + '" title="' + (r.path || "").replace(/"/g,"&quot;") + '">' +
+                  '<img src="/api/projects/' + img.project_id + '/references/' + encodeURIComponent((r.name || "")) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'" style="width:64px;height:64px;object-fit:cover;border-radius:.25rem;border:1px solid #2a2f37;background:#11141a">' +
+                  '<div style="display:none;width:64px;height:64px;align-items:center;justify-content:center;border:1px solid #4a1f1f;background:#3b1212;border-radius:.25rem;color:#fca5a5;font-size:.6rem;padding:.2rem" class="text-center">missing</div>' +
+                  '<div class="text-[10px] text-zinc-400 mt-1 truncate" style="max-width:64px">ref ' + (idx+1) + '</div>' +
+                '</div>'
+              );
+            }).join("") +
+          '</div>' +
+          '<div class="text-[10px] text-zinc-500 mt-1">Click to preview at full size.</div>' +
+        '</div>';
+    }
     inner.innerHTML =
-      '<img src="/api/images/' + img.id + '/file?t=' + Date.now() + '" style="max-width:60vw;max-height:90vh;object-fit:contain;border-radius:.25rem">' +
+      // Main image + hover-magnifier. The magnifier is a small circular lens
+      // that follows the mouse and shows a ~2.5x crop of the same image so
+      // you can verify fine reference detail made it into the render.
+      '<div id="rb-lb-imgwrap" style="position:relative;display:inline-block">' +
+        '<img id="rb-lb-mainimg" src="/api/images/' + img.id + '/file?t=' + Date.now() + '" style="max-width:60vw;max-height:90vh;object-fit:contain;border-radius:.25rem;display:block">' +
+        '<div id="rb-lb-lens" style="position:absolute;pointer-events:none;display:none;width:200px;height:200px;border:2px solid #6366f1;border-radius:50%;box-shadow:0 4px 24px rgba(0,0,0,.6);background-repeat:no-repeat;background-color:#0b0d11;z-index:5"></div>' +
+      '</div>' +
       '<div style="width:34vw;max-width:34vw;color:#e6e8ec;font-size:.875rem;line-height:1.5;display:flex;flex-direction:column;gap:.75rem">' +
         '<div>' +
           '<div style="font-weight:bold;margin-bottom:.25rem">Prompt</div>' +
@@ -660,18 +690,85 @@
             ' <input type="number" id="rb-lb-seed-num" class="input text-xs" style="width:9rem" placeholder="42">' +
           '</label>' +
         '</div>' +
+        lbRefsHTML +
         '<div class="text-[11px] text-zinc-500">' +
           'Size: ' + img.width + '×' + img.height +
           ' · Status: <span class="badge b-' + img.status + '">' + img.status + '</span>' +
         '</div>' +
         '<div class="flex gap-2 mt-1">' +
           '<button id="rb-lb-rerun" class="btn" style="background:#16a34a;color:white">Rerun Generation</button>' +
+          '<button id="rb-lb-edit"  class="btn" style="background:#9333ea;color:white" title="Generate edit variations with this image as the reference">Edit</button>' +
           '<a class="btn btn-secondary" href="/api/images/' + img.id + '/file?download=1" download>Download</a>' +
           '<button id="rb-lb-close" class="btn btn-secondary">Close</button>' +
         '</div>' +
         '<div id="rb-lb-msg" class="text-xs text-amber-300"></div>' +
       '</div>';
     ov.appendChild(inner);
+
+    // ---- Hover magnifier on the main image ----
+    // Circular lens follows the cursor and shows a ~2.5x crop of the same
+    // image so the user can verify reference detail made it into the render.
+    (function setupMagnifier() {
+      const wrap = document.getElementById("rb-lb-imgwrap");
+      const mainImg = document.getElementById("rb-lb-mainimg");
+      const lens = document.getElementById("rb-lb-lens");
+      if (!wrap || !mainImg || !lens) return;
+      const ZOOM = 2.5;
+      const LENS = 200;
+      lens.style.width = LENS + "px";
+      lens.style.height = LENS + "px";
+      function show(e) {
+        if (!mainImg.naturalWidth || !mainImg.naturalHeight) return;
+        const rect = mainImg.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+          lens.style.display = "none"; return;
+        }
+        // Position lens centered on cursor, clamped inside image.
+        const lx = Math.max(0, Math.min(rect.width  - LENS, x - LENS / 2));
+        const ly = Math.max(0, Math.min(rect.height - LENS, y - LENS / 2));
+        lens.style.left = lx + "px";
+        lens.style.top  = ly + "px";
+        // Background = same image scaled by ZOOM, offset to show area under cursor.
+        lens.style.backgroundImage = "url('" + mainImg.src + "')";
+        lens.style.backgroundSize =
+          (mainImg.naturalWidth  * ZOOM * (rect.width  / mainImg.naturalWidth )) + "px " +
+          (mainImg.naturalHeight * ZOOM * (rect.height / mainImg.naturalHeight)) + "px";
+        // Offset: center the bg behind the lens at the cursor point.
+        const bgX = -(x * ZOOM) + LENS / 2;
+        const bgY = -(y * ZOOM) + LENS / 2;
+        lens.style.backgroundPosition = bgX + "px " + bgY + "px";
+        lens.style.display = "block";
+      }
+      wrap.addEventListener("mousemove", show);
+      wrap.addEventListener("mouseleave", () => { lens.style.display = "none"; });
+    })();
+
+    // ---- Reference thumbnail click → simple preview overlay ----
+    (function setupRefThumbs() {
+      const refs = lbRefs; // captured from outer scope
+      document.querySelectorAll(".rb-lb-refthumb").forEach(el => {
+        el.addEventListener("click", () => {
+          const idx = parseInt(el.dataset.refidx, 10);
+          const r = refs[idx]; if (!r) return;
+          // Minimal preview overlay — image only, click anywhere or press Esc to close.
+          let prev = document.getElementById("rb-refpreview");
+          if (prev) prev.remove();
+          prev = document.createElement("div");
+          prev.id = "rb-refpreview";
+          prev.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:85;display:flex;align-items:center;justify-content:center;padding:1rem;cursor:zoom-out;flex-direction:column;gap:0.75rem";
+          const refName = (r.name || "").replace(/</g,"&lt;");
+          const refUrl = "/api/projects/" + img.project_id + "/references/" + encodeURIComponent(r.name || "");
+          prev.innerHTML =
+            '<div class="text-zinc-300 text-sm"><strong>Reference ' + (idx+1) + '</strong> · ' + refName + '</div>' +
+            '<img src="' + refUrl + '" style="max-width:95vw;max-height:85vh;object-fit:contain;border-radius:.4rem">' +
+            '<div class="text-zinc-500 text-xs">click anywhere or press esc to close</div>';
+          prev.addEventListener("click", () => prev.remove());
+          document.body.appendChild(prev);
+        });
+      });
+    })();
 
     // ---- Wire up controls ----
     document.getElementById("rb-lb-close").addEventListener("click", () => ov.remove());
@@ -740,9 +837,221 @@
         btn.disabled = false; btn.textContent = "Rerun Generation";
       }
     });
+
+    // ---- Edit button — opens the edit overlay ----
+    const editBtn = document.getElementById("rb-lb-edit");
+    if (editBtn) editBtn.addEventListener("click", () => openEditPanel(img));
   }
+
+  // ============================================================
+  // Edit overlay — generate variations using this image as ref,
+  // pick one to replace the original (the replaced file is archived
+  // into <orig_dir>/_replaced/<stem>_replaced_N<ext> automatically).
+  // ============================================================
+  function openEditPanel(img) {
+    // Close the lightbox if it's open — we open a new overlay on top.
+    const lb = document.getElementById("rb-lightbox"); if (lb) lb.remove();
+    let ov = document.getElementById("rb-editpanel");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "rb-editpanel";
+      ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:75;display:flex;align-items:flex-start;justify-content:center;padding:1.5rem;overflow:auto";
+      ov.addEventListener("click", e => { if (e.target === ov) ov.remove(); });
+      document.body.appendChild(ov);
+    } else ov.innerHTML = "";
+
+    const inner = document.createElement("div");
+    inner.style.cssText = "max-width:95vw;width:1100px;background:#1a1d22;border-radius:.5rem;padding:1rem;color:#e6e8ec;font-size:.875rem;display:flex;flex-direction:column;gap:1rem";
+    inner.addEventListener("click", e => e.stopPropagation());
+
+    const seedKnown = (img.seed != null && img.seed !== "");
+    inner.innerHTML =
+      '<div class="flex items-center justify-between">' +
+        '<h2 class="text-lg font-semibold">Edit image — generate variations</h2>' +
+        '<button id="rb-edit-close" class="btn btn-secondary text-xs py-1 px-2">close (esc)</button>' +
+      '</div>' +
+      '<div class="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-4">' +
+        '<div>' +
+          '<div class="text-xs text-zinc-400 mb-1">Original (used as reference)</div>' +
+          '<img src="/api/images/' + img.id + '/file?t=' + Date.now() + '" style="width:100%;border-radius:.25rem;object-fit:contain;max-height:300px;background:#0b0d11">' +
+          '<div class="text-[11px] text-zinc-500 mt-1">' + img.width + '×' + img.height + ' · seed ' + (seedKnown ? img.seed : '?') + '</div>' +
+        '</div>' +
+        '<div>' +
+          '<label class="block text-xs mb-2">Prompt — describe the change you want' +
+            '<textarea id="rb-edit-prompt" class="input mt-1" rows="4" placeholder="e.g. ' + 'make the background a sunset sky, keep the product identical'.replace(/"/g,"&quot;") + '"></textarea>' +
+          '</label>' +
+          '<label class="block text-xs mb-2">Negative prompt (optional)' +
+            '<textarea id="rb-edit-neg" class="input mt-1" rows="2">' + ((img.negative_prompt || "").replace(/</g,"&lt;")) + '</textarea>' +
+          '</label>' +
+          '<div class="flex gap-3 items-end mb-2 flex-wrap">' +
+            '<label class="block text-xs">Seed mode' +
+              '<select id="rb-edit-seed" class="input mt-1" style="width:11rem">' +
+                (seedKnown ? '<option value="same">Same as original (' + img.seed + ')</option>' : '') +
+                '<option value="random"' + (seedKnown ? '' : ' selected') + '>Random</option>' +
+                '<option value="specific">Specific…</option>' +
+              '</select>' +
+            '</label>' +
+            '<label class="block text-xs" id="rb-edit-seed-num-wrap" style="display:none">Seed' +
+              '<input id="rb-edit-seed-num" type="number" class="input mt-1" placeholder="42" style="width:8rem">' +
+            '</label>' +
+            '<label class="block text-xs">Count' +
+              '<input id="rb-edit-count" type="number" class="input mt-1" min="1" max="8" value="2" style="width:6rem">' +
+            '</label>' +
+            '<button id="rb-edit-gen" class="btn" style="background:#9333ea;color:white">Generate edits</button>' +
+          '</div>' +
+          '<div id="rb-edit-msg" class="text-xs text-amber-300"></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="border-t border-zinc-800 pt-3">' +
+        '<div class="flex items-center justify-between mb-2">' +
+          '<h3 class="font-semibold text-sm">Edit candidates</h3>' +
+          '<span id="rb-edit-status" class="text-xs text-zinc-400"></span>' +
+        '</div>' +
+        '<div id="rb-edit-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"></div>' +
+        '<div id="rb-edit-empty" class="text-zinc-500 text-sm text-center py-8" style="display:none">' +
+          'No edit candidates yet. Type a prompt and click <strong>Generate edits</strong>.' +
+        '</div>' +
+      '</div>';
+    ov.appendChild(inner);
+
+    document.getElementById("rb-edit-close").addEventListener("click", () => ov.remove());
+    document.getElementById("rb-edit-seed").addEventListener("change", function () {
+      document.getElementById("rb-edit-seed-num-wrap").style.display = (this.value === "specific") ? "" : "none";
+    });
+
+    // ---- Generate button ----
+    document.getElementById("rb-edit-gen").addEventListener("click", async function () {
+      const promptEl = document.getElementById("rb-edit-prompt");
+      const p = (promptEl.value || "").trim();
+      if (!p) { promptEl.focus(); toast("Type a prompt describing the change", "warn"); return; }
+      const seedChoice = document.getElementById("rb-edit-seed").value;
+      let seed_mode = seedChoice;
+      if (seedChoice === "specific") {
+        const v = parseInt(document.getElementById("rb-edit-seed-num").value, 10);
+        seed_mode = Number.isFinite(v) ? v : "random";
+      }
+      const count = Math.max(1, Math.min(8, parseInt(document.getElementById("rb-edit-count").value, 10) || 1));
+      const body = { prompt: p, negative_prompt: document.getElementById("rb-edit-neg").value, seed_mode: seed_mode, count: count };
+      this.disabled = true; this.textContent = "Queueing…";
+      const msg = document.getElementById("rb-edit-msg");
+      msg.style.color = "#fbbf24"; msg.textContent = "Queuing " + count + " edit candidate(s)…";
+      try {
+        const r = await fetch("/api/images/" + img.id + "/edits/generate", {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const d = await r.json();
+        msg.style.color = "#34d399";
+        msg.textContent = "Queued " + d.count + " candidate(s) — they'll appear below as they render.";
+        await refreshEditCandidates(img.id);
+      } catch (e) {
+        msg.style.color = "#f87171";
+        msg.textContent = "Failed: " + String(e).slice(0, 200);
+      } finally {
+        this.disabled = false; this.textContent = "Generate edits";
+      }
+    });
+
+    // Initial load + auto-refresh every 4s while the panel is open.
+    refreshEditCandidates(img.id);
+    const interval = setInterval(() => {
+      if (!document.getElementById("rb-editpanel")) { clearInterval(interval); return; }
+      refreshEditCandidates(img.id);
+    }, 4000);
+  }
+
+  async function refreshEditCandidates(parentId) {
+    try {
+      const r = await fetch("/api/images/" + parentId + "/edits");
+      if (!r.ok) return;
+      const d = await r.json();
+      renderEditCandidates(parentId, d.items || []);
+    } catch (e) { /* silent */ }
+  }
+
+  function renderEditCandidates(parentId, items) {
+    const grid = document.getElementById("rb-edit-grid");
+    const empty = document.getElementById("rb-edit-empty");
+    const status = document.getElementById("rb-edit-status");
+    if (!grid) return;
+    if (!items.length) {
+      grid.innerHTML = "";
+      empty.style.display = "";
+      if (status) status.textContent = "";
+      return;
+    }
+    empty.style.display = "none";
+    const counts = { queued: 0, running: 0, done: 0, failed: 0, cancelled: 0 };
+    items.forEach(i => { if (counts[i.status] !== undefined) counts[i.status]++; });
+    if (status) {
+      status.textContent = items.length + " total · " + counts.done + " ready · " +
+                           counts.running + " running · " + counts.queued + " queued" +
+                           (counts.failed ? " · " + counts.failed + " failed" : "");
+    }
+    grid.innerHTML = items.map(c => {
+      const ready = c.status === "done" && c.output_path;
+      const thumb = ready
+        ? '<img src="/api/images/' + c.id + '/file?t=' + (c.completed_at || c.created_at || Date.now()) + '" class="w-full aspect-square object-cover rounded">'
+        : '<div class="w-full aspect-square flex items-center justify-center bg-zinc-900 text-zinc-400 rounded"><div class="text-center text-xs"><div>' + c.status + '</div>' + (c.error ? '<div class="text-red-400 mt-1 px-2 break-all">' + c.error.replace(/</g,"&lt;").slice(0,80) + '</div>' : '') + '</div></div>';
+      return (
+        '<div class="card p-2" data-cid="' + c.id + '">' +
+          thumb +
+          '<div class="text-[10px] text-zinc-500 mt-1 truncate" title="seed ' + (c.seed || "?") + '">seed ' + (c.seed || "?") + '</div>' +
+          '<div class="flex gap-1 mt-2">' +
+            (ready ? '<button class="btn text-[10px] py-1 px-2 rb-edit-use" style="background:#16a34a;color:white" data-cid="' + c.id + '" title="Replace the original with this edit (original is moved to _replaced/)">Use this</button>' : '') +
+            '<button class="btn-danger btn text-[10px] py-1 px-2 rb-edit-del" data-cid="' + c.id + '" title="Discard this candidate">×</button>' +
+          '</div>' +
+        '</div>'
+      );
+    }).join("");
+
+    // Click handlers
+    grid.querySelectorAll(".rb-edit-use").forEach(btn => {
+      btn.addEventListener("click", () => promoteEditCandidate(parentId, btn.dataset.cid));
+    });
+    grid.querySelectorAll(".rb-edit-del").forEach(btn => {
+      btn.addEventListener("click", () => discardEditCandidate(parentId, btn.dataset.cid));
+    });
+  }
+
+  async function promoteEditCandidate(parentId, candId) {
+    if (!confirm("Replace the original image with this edit?\n\nThe original file will be moved to its folder's _replaced/ subfolder with a serial suffix (so you can recover it later).")) return;
+    try {
+      const r = await fetch("/api/images/" + parentId + "/edits/" + candId + "/promote", { method: "POST" });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      toast("Image replaced. Original archived → " + d.archived_to, "ok");
+      // Close the edit panel + refresh the main gallery (the parent's
+      // output_path is unchanged but its content + thumbnail are new, so
+      // we need fresh data + a cache-bust on the img tag).
+      const ov = document.getElementById("rb-editpanel"); if (ov) ov.remove();
+      await refreshImages();
+    } catch (e) {
+      toast("Promote failed: " + String(e).slice(0, 200), "error");
+    }
+  }
+
+  async function discardEditCandidate(parentId, candId) {
+    if (!confirm("Discard this edit candidate? (the on-disk render is deleted)")) return;
+    try {
+      const r = await fetch("/api/images/" + parentId + "/edits/" + candId, { method: "DELETE" });
+      if (!r.ok) throw new Error(await r.text());
+      await refreshEditCandidates(parentId);
+    } catch (e) {
+      toast("Discard failed: " + String(e).slice(0, 200), "error");
+    }
+  }
+
   document.addEventListener("keydown", e => {
-    if (e.key === "Escape") { const ov = document.getElementById("rb-lightbox"); if (ov) ov.remove(); }
+    if (e.key === "Escape") {
+      // Layered overlays — close from topmost down: ref preview, then
+      // edit panel, then lightbox. Returning after each remove() means
+      // one Esc press only closes one layer.
+      const rp = document.getElementById("rb-refpreview"); if (rp) { rp.remove(); return; }
+      const ed = document.getElementById("rb-editpanel"); if (ed) { ed.remove(); return; }
+      const ov = document.getElementById("rb-lightbox"); if (ov) ov.remove();
+    }
   });
 
   // -------- Batch --------
@@ -863,13 +1172,23 @@
           '<input class="input w-20 br-h" type="number" data-i="' + i + '" value="' + (row.height || 1024) + '">' +
         '</td>' +
         '<td class="p-2"><input class="input w-24 br-seed" data-i="' + i + '" value="' + (row.seed == null ? "" : row.seed) + '" placeholder="random"></td>' +
+        // Scale-hint columns: free-form text that the runner weaves into the
+        // prompt before submitting to ComfyUI. All optional — leave any
+        // blank to skip. See app/services/framing.py:build_scale_clause.
+        '<td class="p-2 text-xs">' +
+          '<input class="input br-size w-full mb-1"      data-i="' + i + '" placeholder="size — e.g. 3 inches tall"   value="' + ((row.size || "")          .replace(/"/g,"&quot;")) + '">' +
+          '<input class="input br-dims w-full mb-1"      data-i="' + i + '" placeholder="dimensions — e.g. 5x3x2 in"  value="' + ((row.dimensions || "")    .replace(/"/g,"&quot;")) + '">' +
+          '<input class="input br-relsize w-full"        data-i="' + i + '" placeholder="relative — a smartphone"    value="' + ((row.relative_size || "") .replace(/"/g,"&quot;")) + '">' +
+        '</td>' +
         '<td class="p-2 align-middle"><button class="btn-danger btn text-[10px] py-1 px-2 br-del" data-i="' + i + '">×</button></td>';
       tb.appendChild(tr);
     });
   }
   function brAdd(row) {
     br.rows.push(Object.assign({
-      name: "", prompt: "", reference_paths: [], width: 1024, height: 1024, seed: "", negative_prompt: ""
+      name: "", prompt: "", reference_paths: [], width: 1024, height: 1024, seed: "", negative_prompt: "",
+      // Scale-hint defaults — blank so the runner skips the clause builder.
+      size: "", dimensions: "", relative_size: ""
     }, row || {}));
     brRefresh();
   }
@@ -895,6 +1214,9 @@
     else if (t.classList.contains("br-w"))      row.width  = parseInt(t.value, 10) || 1024;
     else if (t.classList.contains("br-h"))      row.height = parseInt(t.value, 10) || 1024;
     else if (t.classList.contains("br-seed"))   row.seed   = t.value;
+    else if (t.classList.contains("br-size"))    row.size          = t.value;
+    else if (t.classList.contains("br-dims"))    row.dimensions    = t.value;
+    else if (t.classList.contains("br-relsize")) row.relative_size = t.value;
     else if (t.classList.contains("br-ref1") || t.classList.contains("br-ref2") || t.classList.contains("br-ref3") || t.classList.contains("br-ref4")) {
       const slot = parseInt(t.className.match(/br-ref(\d)/)[1], 10) - 1;
       const refs = (row.reference_paths || []).slice();
@@ -920,6 +1242,8 @@
               reference_paths: r.reference_paths || [r.ref1, r.ref2, r.ref3, r.ref4].filter(Boolean),
               width: r.width || def.width || 1024, height: r.height || def.height || 1024,
               seed: r.seed == null ? "" : r.seed, negative_prompt: r.negative_prompt || def.negative_prompt || "",
+              // Scale hints — pass through if the JSON had them.
+              size: r.size || "", dimensions: r.dimensions || "", relative_size: r.relative_size || "",
             }));
           }
           if (data.output_format) $("#br-format").value = data.output_format;
@@ -952,6 +1276,11 @@
               reference_paths: refs,
               width: parseInt(row.width, 10) || 1024, height: parseInt(row.height, 10) || 1024,
               seed: row.seed || "", negative_prompt: row.negative_prompt || "",
+              // Scale hint columns — also accept "physical_size" / "physical_dimensions"
+              // aliases for users coming from earlier docs.
+              size:          row.size          || row.physical_size       || "",
+              dimensions:    row.dimensions    || row.physical_dimensions || row.dims || "",
+              relative_size: row.relative_size || row.scale               || row.relative || "",
             });
           });
         }
@@ -990,6 +1319,11 @@
         height: ovrOn ? ovrH : (parseInt(r.height, 10) || 1024),
         seed: (r.seed === "" || r.seed == null) ? null : r.seed,
         name: r.name || "",
+        // Scale hints — empty strings stay empty so the server can decide
+        // whether to weave them in (build_scale_clause skips blanks).
+        size: (r.size || "").trim() || null,
+        dimensions: (r.dimensions || "").trim() || null,
+        relative_size: (r.relative_size || "").trim() || null,
       })),
       output_format: $("#br-format").value || "png",
       retain_ref1_name: $("#br-retain-name").checked,
@@ -1450,19 +1784,8 @@
   });
 
   // ============================================================
-  // SSE — live job event stream from the runner
+  // LIVE UPDATES — SSE + polling fallback + visibility refresh
   // ============================================================
-  // Three independent mechanisms keep the gallery in sync so no single
-  // failure leaves the user looking at stale cards:
-  //   1. EventSource subscription (instant updates on the happy path)
-  //   2. Polling every 8s (bulletproof catch-up if SSE silently dies)
-  //   3. Page-Visibility listener that refreshes on tab focus.
-  // This block has been wiped by Cowork sync round-trips multiple times —
-  // when subscribeSSE/startPolling/maybeRefresh aren't defined, calls
-  // from the init block throw ReferenceError (caught silently), the
-  // browser never opens /api/jobs/stream, and the user has to refresh
-  // manually to see ANY status change. So we define them here right
-  // before they're called.
   let _sseRef = null;
   let _sseRetryMs = 1000;
   let _lastRefreshAt = 0;
@@ -1513,7 +1836,7 @@
         _sseRetryMs = Math.min(_sseRetryMs * 2, 30000);
       };
     } catch (e) {
-      console.error("SSE subscribe failed", e);
+      err("SSE subscribe failed", e);
       setTimeout(subscribeSSE, _sseRetryMs);
       _sseRetryMs = Math.min(_sseRetryMs * 2, 30000);
     }

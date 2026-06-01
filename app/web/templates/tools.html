@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Tools — Robomuffin Image Factory{% endblock %}
+{% block content %}
+<main class="max-w-5xl mx-auto px-6 py-8">
+  <h1 class="text-2xl font-semibold mb-2">Tools</h1>
+  <p class="text-zinc-400 mb-6 text-sm">
+    Utility tools that operate independently of the queue + projects pipeline.
+    Add more by dropping new tool pages into <code>app/web/templates/tools_*.html</code>
+    and a card below.
+  </p>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <!-- ===== Compare Folders ===== -->
+    <a href="/tools/compare" class="card p-5 hover:border-indigo-500 transition-colors block">
+      <div class="flex items-start gap-3">
+        <span class="text-3xl">🆎</span>
+        <div>
+          <h2 class="font-semibold mb-1">Compare Folders</h2>
+          <p class="text-zinc-400 text-sm">
+            Pick two folders on this machine. Images with matching filenames
+            are paired and shown side-by-side. Click any pair for a full-screen
+            A/B toggle. Perfect for comparing two render runs of the same prompts.
+          </p>
+        </div>
+      </div>
+    </a>
+
+    <!-- Empty slot placeholder; replace when adding the next tool. -->
+    <div class="card p-5 opacity-40 cursor-not-allowed">
+      <div class="flex items-start gap-3">
+        <span class="text-3xl">⌛</span>
+        <div>
+          <h2 class="font-semibold mb-1 text-zinc-300">More tools coming</h2>
+          <p class="text-zinc-500 text-sm">
+            Suggestions welcome. Common candidates: batch rename, exif scrub,
+            grid montage, A/B export to PDF.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+{% endblock %}
