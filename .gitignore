@@ -142,8 +142,14 @@ $RECYCLE.BIN/
 # app/services/comfyui/workflows/. Don't bloat the repo with a second copy.
 Klein-Workflow-Examples/
 Qwen_edit_examples/
-ComfyUI/
-models/
+# IMPORTANT: anchor this pattern to the repo root with a leading slash.
+# Without the slash, "ComfyUI/" matches *any* directory named comfyui anywhere
+# in the tree — and because git on Windows is case-insensitive by default
+# (core.ignorecase=true), it silently swallowed app/services/comfyui/ too,
+# which is why pulling the repo into another machine showed no integration
+# code. The leading "/" pins this to ./ComfyUI in the project root only.
+/ComfyUI/
+/models/
 *.safetensors
 *.gguf
 *.ckpt

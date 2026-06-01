@@ -1,0 +1,332 @@
+{
+  "100": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "flux-2-klein-base-9b-fp8.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "101": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "102": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "full_encoder_small_decoder.safetensors"
+    },
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "200": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "PROMPT_PLACEHOLDER",
+      "clip": [
+        "101",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "201": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "",
+      "clip": [
+        "101",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "300": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "PLACEHOLDER.png"
+    },
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "310": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "upscale_method": "lanczos",
+      "megapixels": 1,
+      "resolution_steps": 1,
+      "image": [
+        "300",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Scale Ref 1"
+    }
+  },
+  "311": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "upscale_method": "lanczos",
+      "megapixels": 1,
+      "resolution_steps": 1,
+      "image": [
+        "301",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Scale Ref 2"
+    }
+  },
+  "320": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "310",
+        0
+      ],
+      "vae": [
+        "102",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAE Encode Ref 1"
+    }
+  },
+  "400": {
+    "class_type": "ReferenceLatent",
+    "inputs": {
+      "conditioning": [
+        "200",
+        0
+      ],
+      "latent": [
+        "320",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Ref Latent Pos 1"
+    }
+  },
+  "401": {
+    "class_type": "ReferenceLatent",
+    "inputs": {
+      "conditioning": [
+        "201",
+        0
+      ],
+      "latent": [
+        "320",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Ref Latent Neg 1"
+    }
+  },
+  "500": {
+    "class_type": "EmptyFlux2LatentImage",
+    "inputs": {
+      "width": [
+        "311",
+        0
+      ],
+      "height": [
+        "311",
+        1
+      ],
+      "batch_size": 1
+    },
+    "_meta": {
+      "title": "Empty Latent"
+    }
+  },
+  "510": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 0
+    },
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "520": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "530": {
+    "class_type": "Flux2Scheduler",
+    "inputs": {
+      "steps": 20,
+      "width": [
+        "311",
+        0
+      ],
+      "height": [
+        "311",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "Flux2Scheduler"
+    }
+  },
+  "540": {
+    "class_type": "CFGGuider",
+    "inputs": {
+      "cfg": 5,
+      "model": [
+        "100",
+        0
+      ],
+      "positive": [
+        "402",
+        0
+      ],
+      "negative": [
+        "403",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "CFGGuider"
+    }
+  },
+  "600": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "510",
+        0
+      ],
+      "guider": [
+        "540",
+        0
+      ],
+      "sampler": [
+        "520",
+        0
+      ],
+      "sigmas": [
+        "530",
+        0
+      ],
+      "latent_image": [
+        "500",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "700": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "600",
+        0
+      ],
+      "vae": [
+        "102",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAEDecode"
+    }
+  },
+  "800": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "700",
+        0
+      ],
+      "filename_prefix": "robomuffin"
+    },
+    "_meta": {
+      "title": "SaveImage"
+    }
+  },
+  "301": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "PLACEHOLDER.png"
+    },
+    "_meta": {
+      "title": "Reference 2 Image"
+    }
+  },
+  "321": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "311",
+        0
+      ],
+      "vae": [
+        "102",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAE Encode Ref 2"
+    }
+  },
+  "402": {
+    "class_type": "ReferenceLatent",
+    "inputs": {
+      "conditioning": [
+        "400",
+        0
+      ],
+      "latent": [
+        "321",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Ref Latent Pos 2"
+    }
+  },
+  "403": {
+    "class_type": "ReferenceLatent",
+    "inputs": {
+      "conditioning": [
+        "401",
+        0
+      ],
+      "latent": [
+        "321",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Ref Latent Neg 2"
+    }
+  }
+}
